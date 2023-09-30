@@ -1,0 +1,2 @@
+[env]
+LLVM_SYS_160_PREFIX = "C:/Users/YC/Documents/llvm-16.0.0"

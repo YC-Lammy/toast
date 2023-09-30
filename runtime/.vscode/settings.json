@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "minicoro.h": "c",
+        "setjmp.h": "c"
+    }
+}

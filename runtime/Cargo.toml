@@ -1,0 +1,28 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rusty-ts-macro = {version="*", path="../rusty-ts-macro"}
+
+atoi = "*"
+hashbrown = {version = "*", features=["nightly", "ahash"]}
+cityhasher = {version = "*", default-features = false}
+lazy_static = "*"
+parking_lot = "*"
+num-bigint = "*"
+
+corosensei = "0.1.4"
+minicoroutine = "0.1.3"
+
+libc = "*"
+
+
+[build-dependencies]
+cc = "1.0"
