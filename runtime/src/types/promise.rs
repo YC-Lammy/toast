@@ -1,5 +1,5 @@
 
-use crate::gc::GcPtr;
+use iron_gc::GcPtr;
 
 use super::Any;
 
@@ -17,7 +17,7 @@ impl Promise {
             Self::Resolved(r) => Some(Ok(*r)),
             Self::Waiting(rev) => {
                 
-                if let Some(re) = rev.read(){
+                if let Some(re) = unsafe{rev.read()}{
                     match re{
                         Ok(r) => {
                             *self = Self::Resolved(r);

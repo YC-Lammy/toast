@@ -12,7 +12,7 @@ crate-type = ["staticlib"]
 rusty-ts-macro = {version="*", path="../rusty-ts-macro"}
 
 atoi = "*"
-hashbrown = {version = "*", features=["nightly", "ahash"]}
+hashbrown = {version = "*", default-features = false}
 cityhasher = {version = "*", default-features = false}
 lazy_static = "*"
 parking_lot = "*"
@@ -21,8 +21,13 @@ num-bigint = "*"
 corosensei = "0.1.4"
 minicoroutine = "0.1.3"
 
-libc = "*"
+regress = "0.7"
 
+libc = "*"
+unwinding = {version = "0.2", default-features=false, features=["unwinder", "dwarf-expr", "hide-trace", "panic-handler"]}
+gimli = { version = "0.26.1", default-features = false, features = ["read-core"] }
+
+iron-gc = {path = "../iron-gc"}
 
 [build-dependencies]
 cc = "1.0"

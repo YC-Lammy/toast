@@ -1,5 +1,5 @@
 
-use crate::gc::{GcPtr, GcCell};
+use iron_gc::{GcPtr, GcCell};
 
 use super::{JSValue, Any, JSString};
 

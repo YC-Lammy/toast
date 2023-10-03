@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::gc::GcPtr;
+use iron_gc::GcPtr;
 
 use super::{TSFuncPtr, Any};
 

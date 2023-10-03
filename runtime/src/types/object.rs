@@ -4,10 +4,8 @@ use alloc::string::String;
 use hashbrown::HashMap;
 //use crate::bdwgc;
 
-use crate::gc::GcPtr;
+use iron_gc::GcPtr;
 
-use super::async_function::AsyncFuture;
-use super::generator::Generator;
 use super::{promise::Promise, *};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,7 +47,7 @@ pub enum ObjectValue {
     AsyncFunction(Closure),
     GeneratorFunction(Closure),
     AsyncGeneratorFunction(Closure),
-    Generator(Generator),
+    Generator(),
     Boolean(bool),
     Symbol(JSSymbol),
     Number(f64),
@@ -58,13 +56,13 @@ pub enum ObjectValue {
 
 impl JSValue for Object{
     fn data_bits(&self) -> u64 {
-        self.inner.as_cell() as *const _ as u64
+        self.inner.to_raw_ptr() as u64
     }
     fn type_tag(&self) -> u64 {
         Any::OBJECT_TAG
     }
     fn from_any(any:Any) -> Self {
-        Object { inner: unsafe{GcPtr::from_cell(any.data() as usize as _)} }
+        Object { inner: unsafe{GcPtr::from_raw_ptr(any.data() as usize as _)} }
     }
 }
 
@@ -339,29 +337,10 @@ impl Object {
             ObjectValue::Closure(c) => c.call(this, args),
             ObjectValue::FunctionBind(f) => f.call(args),
             ObjectValue::AsyncFunction(c) => {
-                let receiver = AsyncFuture::register(c.ptr, Some(c.captures), this, args);
-
-                let mut obj = Object::new();
-                obj.set_internal(ObjectValue::Promise(Promise::Waiting(receiver)));
-
-                return obj.to_any()
+                todo!()
             }
             ObjectValue::GeneratorFunction(c) => {
-                let p:GcPtr<Any> = unsafe{
-                    GcPtr::malloc_array(args.len())
-                };
-                unsafe{
-                    core::ptr::copy_nonoverlapping(args.as_ptr(), p.as_mut(), args.len())
-                };
-
-                let gen = Generator::new(c.ptr, c.captures, this, p, args.len());
-
-                let mut obj = Object::new();
-                obj.set_internal(ObjectValue::Generator(gen));
-
-                obj.inner.__proto__ = Some(*generator::PROTOTYPE);
-
-                return obj.to_any()
+                todo!()
             }
             ObjectValue::AsyncGeneratorFunction(g) => {
                 todo!()

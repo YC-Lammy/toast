@@ -1,6 +1,7 @@
 
 pub mod bigint;
 pub mod function;
+mod object_map;
 pub mod object;
 pub mod promise;
 pub mod string;

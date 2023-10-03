@@ -1,18 +1,15 @@
 
-use crate::gc::GcPtr;
+use iron_gc::GcPtr;
 
 use super::{JSValue, Any};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub enum JSString{
-    Empty,
-    Alloc(GcPtr<JSStringInner>),
-    Constant(&'static str)
-}
+pub struct JSString(GcPtr<JSStringInner>);
 
 #[repr(packed)]
-pub struct JSStringInner{
+struct JSStringInner{
+    hash: u64,
     len:usize,
     data:[u8;0]
 }
@@ -26,8 +23,6 @@ impl PartialEq for JSString {
     }
 }
 
-impl Eq for JSString {}
-
 impl core::hash::Hash for JSString {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.as_slice().hash(state)
@@ -36,15 +31,7 @@ impl core::hash::Hash for JSString {
 
 impl JSValue for JSString{
     fn data_bits(&self) -> u64 {
-        match self{
-            Self::Empty => 0,
-            Self::Alloc(a) => a.as_cell() as *const _ as u64,
-            Self::Constant(c) => {
-                let n = Self::from_str(*c);
-                unsafe{core::ptr::write(self as *const Self as *mut Self, n)};
-                return n.data_bits();
-            }
-        }
+        self.0.to_raw_ptr() as u64
     }
 
     fn type_tag(&self) -> u64 {
@@ -54,11 +41,7 @@ impl JSValue for JSString{
     fn from_any(any:Any) -> Self {
         let p = any.data();
 
-        if p == 0{
-            Self::Empty
-        } else{
-            Self::Alloc(unsafe{GcPtr::from_cell(p as usize as _)})
-        }
+        unsafe{Self(GcPtr::from_raw_ptr(p as _).unwrap())}
     }
 }
 
@@ -67,12 +50,12 @@ impl JSString {
         Self::from_str(s)
     }    
 
+    pub fn hash(&self) -> u64{
+        return self.0.hash
+    }
+
     pub fn len(&self) -> usize {
-        match self{
-            Self::Empty => 0,
-            Self::Alloc(p) => p.len,
-            Self::Constant(c) => c.len()
-        }
+        self.0.len
     }
 
     pub fn is_empty(&self) -> bool {
@@ -80,13 +63,8 @@ impl JSString {
     }
 
     pub fn as_slice(&self) -> &'static [u8] {
-
-        match self{
-            Self::Empty => &[],
-            Self::Alloc(a) => {
-                unsafe{core::slice::from_raw_parts(a.data.as_ptr(), a.len)}
-            },
-            Self::Constant(c) => c.as_bytes()
+        unsafe{
+            return core::slice::from_raw_parts_mut(&self.0.data as *const _ as *mut u8, self.len())
         }
     }
 
@@ -95,24 +73,19 @@ impl JSString {
     }
 
     pub fn from_str(s: &str) -> Self {
-        if s.len() == 0{
-            return Self::Empty
-        }
-
         unsafe{
-            let mut ptr:GcPtr<JSStringInner> = GcPtr::<u8>::malloc_array(s.len() + core::mem::size_of::<usize>()).cast();
+            let size = s.len() + core::mem::size_of::<JSStringInner>() + 1;
+            let mut ptr:GcPtr<JSStringInner> = GcPtr::<u8>::malloc_array(size).cast();
             core::ptr::copy_nonoverlapping(s.as_bytes().as_ptr(), ptr.data.as_mut_ptr(), s.len());
-            return Self::Alloc(ptr)
+
+            return Self(ptr)
         }
     }
 
-    pub fn to_c_str(&self) -> &'static core::ffi::CStr{
+    /// jsstring is directly compatable with cstring
+    pub fn to_c_str(&self) -> *const libc::c_char{
         unsafe{
-            let alloc = libc::malloc(self.len() + 1) as *mut u8;
-            core::ptr::copy_nonoverlapping(self.as_slice().as_ptr(), alloc, self.len());
-
-            alloc.add(self.len()).write(0);
-            core::ffi::CStr::from_ptr(alloc as *const i8)
+            return self.as_str().as_ptr() as _
         }
     }
 

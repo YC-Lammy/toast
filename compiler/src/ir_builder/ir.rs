@@ -314,6 +314,7 @@ pub enum IR {
 
     /// waits for a promise to be fulfilled.
     Await,
+    /// yields from an async function
     Yield,
 
     /// !

@@ -16,9 +16,10 @@ extern crate alloc;
 
 mod event_loop;
 mod coro;
-mod minicoro;
 mod ecma;
-mod gc;
 mod rt;
 mod types;
 mod utils;
+mod coroutine;
+mod allocator;
+mod runtime;

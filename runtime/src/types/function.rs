@@ -1,7 +1,7 @@
 
 use super::Any;
 
-use crate::gc::GcPtr;
+use iron_gc::GcPtr;
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]

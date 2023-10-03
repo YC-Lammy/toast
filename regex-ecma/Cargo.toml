@@ -1,0 +1,13 @@
+[package]
+name = "regex-ecma"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+unicode-id-start = "^1.1"
+cranelift = "^0.100"
+cranelift-native = "^0.100"
+cranelift-jit = "^0.100"
+cranelift-module = "^0.100"

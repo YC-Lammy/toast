@@ -14,9 +14,8 @@ use parking_lot::RwLock;
 use rusty_ts_macro::hash;
 
 use minicoroutine::{Coroutine, CoroutineRef};
-use crate::gc::{GcPtr, self};
+use iron_gc::{GcPtr, self};
 use crate::types::JSValue;
-use crate::types::async_function::{AwaitOrYield, ASYNC_FUTURES};
 use crate::types::async_generator::ASYNC_GENERATORS;
 use crate::types::{Any, Object, ObjectValue, JSString};
 
@@ -36,7 +35,7 @@ lazy_static::lazy_static!{
 /// initialise runtime and return the globalThis value
 #[no_mangle]
 pub unsafe extern "C" fn RT_entry() -> Any {
-    gc::init();
+    iron_gc::initialise();
     return GLOBAL_THIS.to_any();
 }
 
@@ -50,13 +49,13 @@ pub unsafe extern "C" fn RT_exit(){
 pub unsafe extern "C" fn RT_print(value:Any){
     //println!("{}", value.to_string());
     let s = value.to_string();
-    let a = GcPtr::<u8>::malloc_array(s.len() + 1);
-    // copy content
-    libc::memcpy(a.as_ptr() as _, s.as_slice().as_ptr() as _, s.len());
-    // append null byte
-    a.as_mut().add(s.len()).write(0);
 
-    libc::printf(a.as_mut() as _);
+    let ptr = libc::malloc(s.len() + 1) as *mut u8;
+
+    libc::memcpy(ptr as _, s.as_slice().as_ptr() as _, s.len());
+    ptr.add(s.len()).write(0);
+
+    libc::printf(ptr as _);
     libc::printf(b"\n\0".as_ptr() as _);
 }
 
@@ -139,13 +138,13 @@ pub unsafe extern "C" fn RT_init_function(func: JSFunc, captures:*const *const A
         let slice = core::slice::from_raw_parts(captures, capture_size as usize);
         
         // copy the captures
-        let dst = GcPtr::<GcPtr<Any>>::malloc_array(capture_size as usize);
+        let mut dst = GcPtr::<GcPtr<Any>>::malloc_array(capture_size as usize);
 
         let mut i = 0;
         for cap in slice{
 
             let ptr = GcPtr::from_ptr(*cap as *mut Any).expect("error creating GcPtr from *const ()");
-            dst.as_mut().add(i).write(ptr);
+            dst.as_mut().as_mut_ptr().add(i).write(ptr);
 
             i += 1;
         }
@@ -204,73 +203,6 @@ pub unsafe extern "C" fn RT_new_call(callee: Any, argc:u32, argv:*mut Any) -> An
     todo!();
 
     return callee.call(obj.to_any(), args)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn RT_await(value: Any) -> Any{
-    
-
-    if let Some(obj) = value.as_object(){
-        if let Some(p) = obj.as_promise(){
-            let coro = Coroutine::<Any, Result<AwaitOrYield, Any>, Any, (), gc::Allocater>::running();
-
-            if let Some(coro) = coro{
-                // not in global context
-                // loop until result is fetched
-                loop{
-                    if let Some(re) = p.poll(){
-                        match re{
-                            Ok(r) => return r,
-                            Err(e) => {
-                                coro.yield_(Err(e));
-                                return e
-                            }
-                        }
-                    }
-
-                    coro.yield_(Ok(AwaitOrYield::Await));
-                };
-
-            } else {
-                // global context
-                loop{
-                    if let Some(re) = p.poll(){
-                        match re{
-                            Ok(r) => return r,
-                            Err(e) => {
-                                RT_throw(e);
-                                return e
-                            }
-                        }
-                    }
-
-                    for i in &mut ASYNC_FUTURES{
-                        i.resume();
-                    }
-
-                    for i in &mut ASYNC_GENERATORS{
-                        i.resume();
-                    }
-                }
-            }
-            
-        }
-    }
-    
-    return value
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn RT_yield(value: Any) -> Any{
-    let mut o = Object::new();
-    o.set_property(JSString::Constant("value"), value);
-    o.set_property(JSString::Constant("done"), Any::FALSE);
-
-    let coro:CoroutineRef<Any, Result<AwaitOrYield, Any>, Any, (), gc::Allocater> = Coroutine::running().expect("calling yield on global context");
-
-    let y:Any = coro.yield_(Ok(AwaitOrYield::Yield(o.to_any())));
-
-    return y
 }
 
 #[no_mangle]

@@ -12,7 +12,7 @@ use core::alloc::{Allocator, Layout};
 
 use hashbrown::hash_map::DefaultHashBuilder;
 
-use crate::gc::{self, GcPtr};
+use iron_gc::GcPtr;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GcAllocator;
@@ -23,7 +23,7 @@ unsafe impl core::alloc::Allocator for GcAllocator{
             let ptr = GcPtr::<u8>::malloc_array(layout.size());
             ptr.set_root();
             
-            return Ok(core::mem::transmute(core::slice::from_raw_parts(ptr.as_mut(), layout.size())))
+            return Ok(core::mem::transmute(core::slice::from_raw_parts(ptr.as_mut_ptr(), layout.size())))
         }
     }
 
