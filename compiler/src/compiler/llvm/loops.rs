@@ -14,34 +14,32 @@ impl<'ctx> FunctionBuilder<'ctx> {
     }
 
     fn find_break_with_label(&self, label: &JsWord) -> BasicBlock<'ctx> {
-        
-        for (exit, l) in self.breaks.borrow().iter(){
-            if let Some(l) = l{
-                if l.eq(label){
-                    return *exit
+        for (exit, l) in self.breaks.borrow().iter() {
+            if let Some(l) = l {
+                if l.eq(label) {
+                    return *exit;
                 }
             }
         }
         unreachable!()
     }
 
-    fn get_last_break(&self) -> BasicBlock<'ctx>{
+    fn get_last_break(&self) -> BasicBlock<'ctx> {
         return self.breaks.borrow().last().unwrap().0;
     }
 
     fn find_continue_with_label(&self, label: &JsWord) -> BasicBlock<'ctx> {
-        
-        for (exit, l) in self.continues.borrow().iter(){
-            if let Some(l) = l{
-                if l.eq(label){
-                    return *exit
+        for (exit, l) in self.continues.borrow().iter() {
+            if let Some(l) = l {
+                if l.eq(label) {
+                    return *exit;
                 }
             }
         }
         unreachable!()
     }
 
-    fn get_last_continue(&self) -> BasicBlock<'ctx>{
+    fn get_last_continue(&self) -> BasicBlock<'ctx> {
         return self.continues.borrow().last().unwrap().0;
     }
 

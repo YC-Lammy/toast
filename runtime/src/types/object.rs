@@ -10,6 +10,7 @@ use crate::asynchronous::Promise;
 
 use super::*;
 use super::object_map::ObjectMap;
+use super::regex::Regexp;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -46,10 +47,11 @@ pub enum ObjectValue {
     GeneratorFunction(Closure),
     AsyncGeneratorFunction(Closure),
     Generator(),
+    RegEx(Regexp),
+    Promise(Promise),
     Boolean(bool),
     Symbol(JSSymbol),
     Number(f64),
-    Promise(Promise),
 }
 
 impl JSValue for Object{
@@ -61,69 +63,6 @@ impl JSValue for Object{
     }
     fn from_any(any:Any) -> Self {
         Object { inner: unsafe{GcPtr::<ObjectInner>::from_raw_ptr(any.data() as usize as _).expect("invalid pointer casted from Any.")} }
-    }
-}
-
-pub struct ObjectStructure{
-    /// key, index
-    keys: HashMap<u64, usize>,
-    added_key: String,
-    branches: HashMap<u64, *mut ObjectStructure>
-}
-
-unsafe impl Sync for ObjectStructure{}
-
-lazy_static::lazy_static!{
-    static ref NULL_OBJECT_STRUCTURE:&'static mut ObjectStructure = {
-        let mut o = Box::leak(Box::new(ObjectStructure{
-            keys: HashMap::default(),
-            added_key: String::from("constructor"),
-            branches: HashMap::default()
-        }));
-
-        o = o.add_property("".into());
-
-        o
-    };
-}
-
-impl ObjectStructure{
-    pub fn from_ptr(ptr:*const Self) -> &'static mut Self{
-        unsafe{(ptr as *mut Self).as_mut().unwrap_unchecked()}
-    }
-
-    pub fn as_mut(&self) -> &'static mut Self{
-        unsafe{(self as *const Self as *mut Self).as_mut().unwrap_unchecked()}
-    }
-
-    pub fn get_property(&self, property:u64) -> Option<usize>{
-        if let Some(k) = self.keys.get(&property){
-            return Some(*k)
-        } else{
-            return None
-        }
-    }
-
-    pub fn add_property(&mut self, property:&str) -> &'static mut ObjectStructure{
-        let key = JSString::hash_key_from_utf8(&property);
-
-        if let Some(b) = self.branches.get(&key){
-            return Self::from_ptr(*b)
-        } else{
-            let mut k = self.keys.clone();
-            k.insert(key, k.len());
-
-            let s = Box::leak(Box::new(
-                ObjectStructure{
-                    keys: k,
-                    added_key: String::from(property),
-                    branches: HashMap::new()
-                }
-            ));
-
-            self.branches.insert(key, s);
-            return s
-        }
     }
 }
 
@@ -153,6 +92,18 @@ impl Object {
         return Self{ inner: p }
     }
 
+    pub fn new_regex(reg: Regexp) -> Self{
+        let p = GcPtr::new(
+            ObjectInner { 
+                value: ObjectValue::RegEx(reg), 
+                __proto__: None,
+                values: ObjectMap::new()
+            }
+        );
+        
+        return Self{ inner: p }
+    }
+
     #[inline]
     pub fn set_internal(&mut self, value: ObjectValue){
         self.inner.value = value;
@@ -168,7 +119,7 @@ impl Object {
 
     #[inline]
     pub fn get_property(&self, key: JSString) -> Option<Any> {
-        let hkey = key.to_hash_key();
+        let hkey = key.hash();
 
         // fast path
         if let Some(value) = self.inner.values.get(&key){
@@ -228,7 +179,7 @@ impl Object {
         }
 
         // calculate the hash key
-        let hkey = key.to_hash_key();
+        let hkey = key.hash();
 
         self.inner.values.set(&key, value);
     }

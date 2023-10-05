@@ -10,6 +10,7 @@
 #![feature(iter_collect_into)]
 #![feature(c_variadic)]
 #![feature(offset_of)]
+#![feature(core_intrinsics)]
 #![no_std]
 
 extern crate alloc;

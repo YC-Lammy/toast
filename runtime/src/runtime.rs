@@ -1,3 +1,4 @@
+
 use iron_gc::Array;
 use iron_gc::GcPtr;
 
@@ -28,8 +29,8 @@ extern "C" fn __nativejs_print(value: Any){
 }
 
 #[no_mangle]
-extern "C" fn __nativejs_throw(exception: Any){
-    
+extern "C" fn __nativejs_throw(exception: Any) -> !{
+    unreachable!()
 }
 
 #[no_mangle]
@@ -85,10 +86,28 @@ extern "C" fn __nativejs_gc_read_array_any(array: GcPtr<Array<Any>>, idx: usize)
 }
 
 #[no_mangle]
-extern "C" fn __nativejs_call_async_func(func: *const (), data: GcPtr<Array<Any>>) -> Any{
-    let promise = crate::asynchronous::spawn(
-        crate::asynchronous::AsyncRoutine::new(func, data)
-    );
+extern "C" fn __nativejs_gc_write_array_any(mut array: GcPtr<Array<Any>>, idx: usize, value: Any){
+    if let Some(ptr) = array.get_mut(idx){
+        *ptr = value;
+    }
+}
+
+#[no_mangle]
+extern "C" fn __nativejs_gc_alloc_capture_stack(len: usize) -> GcPtr<Array<GcPtr<Any>>>{
+    let ptr = GcPtr::new(Any::UNDEFINED);
+    let ptr = GcPtr::new_array_copied(ptr, len);
+
+    return ptr
+}
+
+#[no_mangle]
+extern "C" fn __nativejs_gc_read_capture_stack_elem_ptr(ptr: GcPtr<Array<GcPtr<Any>>>, idx: usize) -> *mut Any{
+    return ptr.as_ref().get(idx).unwrap().as_mut_ptr()
+}
+
+#[no_mangle]
+extern "C" fn __nativejs_call_async_func(func: *const (), data: GcPtr<Array<Any>>, this: Any, captures: GcPtr<Array<GcPtr<Any>>>) -> Any{
+    let promise = crate::asynchronous::spawn(func, data);
 
     return Object::new_promise(promise).into()
 }
@@ -101,4 +120,37 @@ extern "C" fn __nativejs_create_object() -> Any{
 #[no_mangle]
 extern "C" fn __nativejs_object_get(obj: Any, key: Any) -> Any{
     return obj.get_property(key.to_string()).unwrap_or(Any::UNDEFINED)
+}
+
+#[no_mangle]
+extern "C" fn __nativejs_object_set(obj: Any, key: Any, value: Any){
+    if let Some(obj) = obj.as_object(){
+        obj.set_property(key.to_string(), value);
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn __nativejs_object_call(func: Any, this: Any, argv: *const Any, argc: u32) -> Any{
+    let args = core::slice::from_raw_parts(argv, argc as usize);
+    return func.call(this, args)
+}
+
+#[no_mangle]
+unsafe extern "C" fn __nativejs_create_regex(src: *const libc::c_char, flags: *const libc::c_char) -> Any{
+    let slen = libc::strlen(src);
+    let flen = libc::strlen(flags);
+
+    let src = core::str::from_utf8_unchecked(core::slice::from_raw_parts(src as *const u8, slen));
+    let flags = core::str::from_utf8_unchecked(core::slice::from_raw_parts(flags as *const u8, flen));
+
+    let reg = crate::types::regex::Regexp::new(src, flags);
+
+    match reg{
+        Ok(reg) => {
+            return Object::new_regex(reg).into()
+        }
+        Err(e) => {
+            __nativejs_throw(Any::error(&e.text))
+        }
+    }
 }

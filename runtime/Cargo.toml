@@ -13,7 +13,6 @@ rusty-ts-macro = {version="*", path="../rusty-ts-macro"}
 
 atoi = "*"
 hashbrown = {version = "*", default-features = false}
-cityhasher = {version = "*", default-features = false}
 lazy_static = "*"
 parking_lot = "*"
 num-bigint = "*"

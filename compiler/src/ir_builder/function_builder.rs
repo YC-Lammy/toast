@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use swc_atoms::JsWord;
 
@@ -11,7 +11,7 @@ use super::{
     IRContainer, VariableId,
 };
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy , Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct FunctionId(uuid::Uuid);
 
 impl FunctionId {

@@ -1,10 +1,3 @@
+pub trait FunctionBuilder {}
 
-
-
-pub trait FunctionBuilder{
-
-}
-
-pub struct AsyncFunction{
-    
-}
+pub struct AsyncFunction {}

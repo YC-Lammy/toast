@@ -11,7 +11,7 @@ use swc_ecmascript::ast::*;
 use num_traits::cast::ToPrimitive;
 use parking_lot::RwLock;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
@@ -57,7 +57,7 @@ pub struct IRPackage {
     pub ir: Vec<IR>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy , Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct VariableId(uuid::Uuid);
 
 impl VariableId {
@@ -453,11 +453,13 @@ impl IRBuilder {
                 }
             }
             Stmt::Labeled(l) => {
-                container.push(IR::Block { label: l.label.sym.clone() });
+                container.push(IR::Block {
+                    label: l.label.sym.clone(),
+                });
 
                 self.translate_stmt(container, &l.body, Some(l.label.sym.clone()))?;
 
-                container.push(IR::EndBlock { label: l.label.sym.clone() });
+                container.push(IR::EndBlock);
             }
             Stmt::Return(r) => {
                 if let Some(arg) = &r.arg {

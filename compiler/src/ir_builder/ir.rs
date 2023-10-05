@@ -1,6 +1,6 @@
 use swc_atoms::JsWord;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use super::{FunctionId, VariableId};
 
@@ -51,12 +51,10 @@ pub enum IR {
     /// release the memory
     DropTemp(TempId),
 
-    Block{
-        label: JsWord
-    },
-    EndBlock{
+    Block {
         label: JsWord,
     },
+    EndBlock,
     /// enters an indefinite loop
     Loop {
         label: Option<JsWord>,
@@ -142,11 +140,6 @@ pub enum IR {
     /// initialise a function object
     InitFunction(FunctionId),
 
-    /// creates a list of variable length arguments
-    CreateVarArgList(VarArgId),
-    /// push the argument to variable length list
-    PushVarArg(VarArgId),
-
     CreateArgList(ArgListId),
     PushArg(ArgListId),
 
@@ -154,17 +147,17 @@ pub enum IR {
     ///
     /// call the function dynamically
     Call {
+        this: TempId,
         arg_len: usize,
         args: ArgListId,
         maybe_static: Option<FunctionId>,
     },
-    /// function: ACC, var_arg: VarArgId
+    /// function: ACC, args_array: TempId
     ///
-    /// call the function with a length counter dynamically
-    ///
-    /// reset the *VARARG* register when called
+    /// call the function with an array as arguments
     CallVarArgs {
-        var_arg: VarArgId,
+        this: TempId,
+        args_array: TempId
     },
     /// call a function statically
     ///
@@ -173,13 +166,6 @@ pub enum IR {
         func_id: FunctionId,
         arg_len: usize,
         args: ArgListId,
-    },
-    /// call the function with a length counter statically
-    ///
-    /// reset the *VARARG* register when called
-    CallStaticVarArgs {
-        func_id: FunctionId,
-        var_arg: VarArgId,
     },
     /// read the nth param
     ReadParam(usize),
@@ -234,26 +220,10 @@ pub enum IR {
         obj: TempId,
         propname: TempId,
     },
-    /// assign current value in ACC to *INDEX* in *OBJECT*
-    ObjAssign,
-    /// call the function at *INDEX* of *OBJECT* with *OBJECT* as this value
-    ObjCall {
-        args: ArgListId,
-        arg_len: usize,
-    },
-    ObjCallVarArg {
-        var_arg: VarArgId,
-    },
-
-    /// creates an empty array
-    CreateArray {
-        /// the pre allocated size
-        size: usize,
-    },
     /// the array is stored in temp
     ///
     /// the value to be push is read from ACC
-    ArrayPush {
+    ObjectPush {
         array: TempId,
     },
 

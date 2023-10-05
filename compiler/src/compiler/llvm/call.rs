@@ -10,7 +10,6 @@ impl<'ctx> FunctionBuilder<'ctx> {
         let context = self.module.get_context();
 
         if let Some(error_handler) = self.has_error_handler() {
-
             let re = self.builder.build_call(function, args, "call");
 
             let has_exception = self.module.get_function("RT_has_exception").unwrap();
@@ -49,7 +48,6 @@ impl<'ctx> FunctionBuilder<'ctx> {
             }
 
             return re.try_as_basic_value().left().unwrap();
-
         } else {
             let re = self.builder.build_direct_call(function, &args, "call");
 
@@ -250,19 +248,23 @@ impl<'ctx> FunctionBuilder<'ctx> {
         // fn(func: Any, this:Any, argc:i32, argv: *const Any) -> Any
         let rt_call = self.module.get_function("RT_call").unwrap();
 
-        let argv = self.builder.build_alloca(self.context.f64_type().array_type(arg_len as u32), "argv");
-        let argv = self.builder.build_pointer_cast(argv, self.context.f64_type().ptr_type(AddressSpace::default()), "ptr_cast");
+        let argv = self
+            .builder
+            .build_alloca(self.context.f64_type().array_type(arg_len as u32), "argv");
+        let argv = self.builder.build_pointer_cast(
+            argv,
+            self.context.f64_type().ptr_type(AddressSpace::default()),
+            "ptr_cast",
+        );
 
         let mut i = 0;
-        for arg in arguments{
-            let ptr = unsafe{
+        for arg in arguments {
+            let ptr = unsafe {
                 self.builder.build_gep(
-                    self.context.f64_type(), 
-                    argv, 
-                    &[
-                        self.context.i32_type().const_int(i, false)
-                        ], 
-                    "gep"
+                    self.context.f64_type(),
+                    argv,
+                    &[self.context.i32_type().const_int(i, false)],
+                    "gep",
                 )
             };
             self.builder.build_store(ptr, *arg);
@@ -326,7 +328,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     capture_stack,
                     &[
                         self.context.i32_type().const_zero(),
-                        self.module.get_context().i32_type().const_int(i, false)
+                        self.module.get_context().i32_type().const_int(i, false),
                     ],
                     "gep",
                 )
@@ -428,35 +430,49 @@ impl<'ctx> FunctionBuilder<'ctx> {
 
         debug_assert!(arg_v.len() == arg_len);
 
-        let args_v = self.builder.build_alloca(self.context.f64_type().array_type(arg_len as u32), "call_arg");
-        let args_v = self.builder.build_pointer_cast(args_v, self.context.f64_type().ptr_type(AddressSpace::default()), "ptr_cast");
-        
+        let args_v = self.builder.build_alloca(
+            self.context.f64_type().array_type(arg_len as u32),
+            "call_arg",
+        );
+        let args_v = self.builder.build_pointer_cast(
+            args_v,
+            self.context.f64_type().ptr_type(AddressSpace::default()),
+            "ptr_cast",
+        );
+
         let mut i = 0;
-        for arg in arg_v{
-            let ptr = unsafe{
+        for arg in arg_v {
+            let ptr = unsafe {
                 self.builder.build_gep(
-                    self.context.f64_type(), 
-                    args_v, 
-                    &[self.context.i32_type().const_int(i, false)], 
-                    "gep"
+                    self.context.f64_type(),
+                    args_v,
+                    &[self.context.i32_type().const_int(i, false)],
+                    "gep",
                 )
             };
             self.builder.build_store(ptr, *arg);
             i += 1;
         }
 
-        let ptr = self.builder.build_pointer_cast(args_v, self.context.f64_type().ptr_type(AddressSpace::default()), "ptr_cast");
+        let ptr = self.builder.build_pointer_cast(
+            args_v,
+            self.context.f64_type().ptr_type(AddressSpace::default()),
+            "ptr_cast",
+        );
 
         let new_call = self.module.get_function("RT_new_call").unwrap();
 
         let re = self.call_function(
-            new_call, 
+            new_call,
             &[
-                self.read_acc().into(), 
-                self.context.i32_type().const_int(arg_len as u64, false).into(),
-                ptr.into()
-                ]
-            );
+                self.read_acc().into(),
+                self.context
+                    .i32_type()
+                    .const_int(arg_len as u64, false)
+                    .into(),
+                ptr.into(),
+            ],
+        );
 
         self.write_acc(re.into_float_value());
         self.drop_arg_list(args);

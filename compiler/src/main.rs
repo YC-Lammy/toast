@@ -12,12 +12,11 @@ mod test;
 
 use std::io::Write;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use clap::Parser;
 use parser::ParsedPackage;
 use swc_common::{sync::Lrc, FilePathMapping, SourceMap};
-
 
 #[derive(Parser)]
 #[command(name = "rtc")]

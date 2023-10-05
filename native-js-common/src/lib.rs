@@ -1,6 +1,12 @@
-use core::hash::Hash;
-use std::hash::Hasher;
+#![no_std]
 
+extern crate alloc;
+
+use core::hash::Hash;
+use core::hash::Hasher;
+
+pub use dtoa as ftoa;
+pub use itoa;
 
 pub use ahash;
 
@@ -10,10 +16,16 @@ pub fn hash_integer(value: usize) -> u64{
     let mut buf = itoa::Buffer::new();
     let s = buf.format(value);
 
-    let mut hasher = ahash::AHasher::default();
-    s.hash(&mut hasher);
+    return hash_string(s);
+}
 
-    return hasher.finish();
+#[inline]
+pub fn hash_float(value: f64) -> u64{
+    let mut buf = dtoa::Buffer::new();
+
+    let s = buf.format(value);
+
+    return hash_string(s)
 }
 
 /// a fast hasing method for hashing string

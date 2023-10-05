@@ -3,7 +3,6 @@ pub mod bigint;
 pub mod function;
 mod object_map;
 pub mod object;
-pub mod promise;
 pub mod string;
 pub mod symbol;
 pub mod regex;
@@ -19,10 +18,6 @@ pub use symbol::*;
 use crate::rt;
 
 use self::bigint::Bigint;
-
-extern "C"{
-    fn format_f64(f:f64, len:&mut libc::c_int, buf:*mut libc::c_char);
-}
 
 pub trait JSValue{
     fn data_bits(&self) -> u64;
@@ -208,11 +203,10 @@ impl Any {
 
         // number
         if let Some(n) = self.as_number() {
-            let mut len = 0;
-            let mut buf:[libc::c_char;40] = [0;40];
-            unsafe{format_f64(n, &mut len, buf.as_mut_ptr())};
+            let mut buf = native_js_common::ftoa::Buffer::new();
+            let s = buf.format(n);
 
-            return JSString::from_str(unsafe{core::str::from_utf8(core::slice::from_raw_parts(&mut buf as *mut i8 as *mut u8, len as usize)).expect("Format error")});
+            return JSString::from_str(s);
         }
 
         // bigint

@@ -25,8 +25,12 @@ use crate::ir_builder::IRPackage;
 use crate::ir_builder::VariableId;
 use crate::Configuration;
 
+mod async_function;
+mod basic_function;
 mod bin;
+mod builder;
 mod call;
+mod compiler;
 mod conditional;
 mod loops;
 mod object;
@@ -79,7 +83,6 @@ pub struct FunctionBuilder<'ctx> {
     /// variables and their corresponding location
     variables: RefCell<HashMap<VariableId, PointerValue<'ctx>>>,
 }
-
 
 /// 'compile' has to be a function to avoid lifetime dependency loop
 pub fn compile(config: Configuration, pacakge: IRPackage) {
@@ -136,7 +139,7 @@ pub fn compile(config: Configuration, pacakge: IRPackage) {
         let func = func.clone();
         let module = module.clone();
         let compiler = compiler.clone();
-        
+
         let work = move || {
             let mut builder = FunctionBuilder::new(funcid, module, compiler, func);
             builder.compile();
@@ -144,7 +147,6 @@ pub fn compile(config: Configuration, pacakge: IRPackage) {
 
         work();
     }
-
 
     let main_id = FunctionId::new();
     let main_func = module.add_function(&main_id.to_string(), functy, None);
@@ -217,7 +219,9 @@ pub fn compile(config: Configuration, pacakge: IRPackage) {
         panic!("Internal error: {}", e.to_string_lossy());
     }
 
-    module.print_to_file(&Path::new("foo.ll")).expect("failed to write to file");
+    module
+        .print_to_file(&Path::new("foo.ll"))
+        .expect("failed to write to file");
     module.write_bitcode_to_path(&Path::new("foo.bc"));
 
     let path = std::env::current_dir().unwrap();
@@ -248,22 +252,14 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
     let shadow_stack_elem = context.struct_type(
         &[
             context.f64_type().ptr_type(Default::default()).into(),
-            context.i32_type().into()
-        ], 
-        true
+            context.i32_type().into(),
+        ],
+        true,
     );
 
-    module.add_global(
-        shadow_stack_elem.array_type(1024 * 8), 
-        None, 
-        "shadow_stack"
-    );
+    module.add_global(shadow_stack_elem.array_type(1024 * 8), None, "shadow_stack");
 
-    let cursor = module.add_global(
-        context.i32_type(), 
-        None, 
-        "shadow_stack_cursor"
-    );
+    let cursor = module.add_global(context.i32_type(), None, "shadow_stack_cursor");
 
     cursor.set_constant(false);
     cursor.set_initializer(&context.i32_type().const_zero());
@@ -318,7 +314,8 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
 
     module.add_function(
         "RT_gc_malloc",
-        context.i8_type()
+        context
+            .i8_type()
             .ptr_type(AddressSpace::default())
             .fn_type(&[context.i32_type().into()], false),
         Some(Linkage::External),
@@ -326,7 +323,8 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
 
     module.add_function(
         "RT_gc_malloc_uncollectable",
-        context.i8_type()
+        context
+            .i8_type()
             .ptr_type(AddressSpace::default())
             .fn_type(&[context.i32_type().into()], false),
         Some(Linkage::External),
@@ -334,7 +332,8 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
 
     module.add_function(
         "RT_rc_malloc",
-        context.i8_type()
+        context
+            .i8_type()
             .ptr_type(AddressSpace::default())
             .fn_type(&[context.i32_type().into()], false),
         Some(Linkage::External),
@@ -411,11 +410,11 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
         "RT_call",
         any_ty.fn_type(
             &[
-                any_ty.into(), 
-                any_ty.into(), 
+                any_ty.into(),
+                any_ty.into(),
                 context.i32_type().into(),
                 any_ty.ptr_type(AddressSpace::default()).into(),
-                ],
+            ],
             false,
         ),
         Some(Linkage::External),
@@ -456,16 +455,16 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
     );
 
     module.add_function(
-        "RT_new_call", 
+        "RT_new_call",
         any_ty.fn_type(
             &[
                 any_ty.into(),
                 context.i32_type().into(),
-                any_ty.ptr_type(AddressSpace::default()).into()
-            ], 
-            false
-        ), 
-        Some(Linkage::External)
+                any_ty.ptr_type(AddressSpace::default()).into(),
+            ],
+            false,
+        ),
+        Some(Linkage::External),
     );
 
     module.add_function(
@@ -530,8 +529,8 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
     module.add_function(
         "RT_object_set",
         context.void_type().fn_type(
-            &[any_ty.into(), context.i64_type().into(), any_ty.into()], 
-            false
+            &[any_ty.into(), context.i64_type().into(), any_ty.into()],
+            false,
         ),
         Some(Linkage::External),
     );
@@ -539,10 +538,9 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
     // fn RT_object_set(object: Any, key:Any, value: Any)
     module.add_function(
         "RT_object_set_computed",
-        context.void_type().fn_type(
-            &[any_ty.into(), any_ty.into(), any_ty.into()], 
-            false
-        ),
+        context
+            .void_type()
+            .fn_type(&[any_ty.into(), any_ty.into(), any_ty.into()], false),
         Some(Linkage::External),
     );
 
@@ -550,8 +548,8 @@ fn create_runtime<'ctx>(context: &'ctx Context, _config: &Configuration, module:
     module.add_function(
         "RT_object_set_index",
         context.void_type().fn_type(
-            &[any_ty.into(), context.i32_type().into(), any_ty.into()], 
-            false
+            &[any_ty.into(), context.i32_type().into(), any_ty.into()],
+            false,
         ),
         Some(Linkage::External),
     );
@@ -700,9 +698,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.builder.build_gep(
                     self.context.f64_type().ptr_type(AddressSpace::default()),
                     self.capture_stack,
-                    &[
-                        self.context.i32_type().const_int(i, false)
-                        ],
+                    &[self.context.i32_type().const_int(i, false)],
                     "capture_stack_gep",
                 )
             };
@@ -737,7 +733,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
             let len = self.ir_function.own_variables.len();
 
             let ptr = self.builder.build_alloca(self.context.f64_type().array_type(len as u32), "alloca_var");
-            
+
             let mut va = self.variables.borrow_mut();
 
             for i in 0..len{
@@ -789,27 +785,28 @@ impl<'ctx> FunctionBuilder<'ctx> {
             self.pop_shadow_stack();
         }
         */
-        
+
         let value = self.read_acc();
         self.builder.build_return(Some(&value));
     }
 
-    fn push_shadow_stack(&self, value: PointerValue<'ctx>, length: IntValue<'ctx>) -> IntValue<'ctx>{
-
+    fn push_shadow_stack(
+        &self,
+        value: PointerValue<'ctx>,
+        length: IntValue<'ctx>,
+    ) -> IntValue<'ctx> {
         let stack = self.module.get_global("shadow_stack").unwrap();
         let cursor = self.module.get_global("shadow_stack_cursor").unwrap();
 
         let re = self.builder.build_atomicrmw(
-            inkwell::AtomicRMWBinOp::Add, 
-            cursor.as_pointer_value(), 
-            self.context.i32_type().const_int(1, false), 
-            inkwell::AtomicOrdering::SequentiallyConsistent
+            inkwell::AtomicRMWBinOp::Add,
+            cursor.as_pointer_value(),
+            self.context.i32_type().const_int(1, false),
+            inkwell::AtomicOrdering::SequentiallyConsistent,
         );
 
-        let index = match re{
-            Ok(i) => {
-                i
-            }
+        let index = match re {
+            Ok(i) => i,
             Err(e) => {
                 panic!("{}", e);
             }
@@ -817,52 +814,40 @@ impl<'ctx> FunctionBuilder<'ctx> {
 
         let stack_ptr = stack.as_pointer_value();
 
-        unsafe{
+        unsafe {
             let shadow_stack_ptr = self.builder.build_gep(
-                self.context.f64_type().array_type(1024 * 8), 
-                stack_ptr, 
-                &[
-                    self.context.i32_type().const_zero(),
-                    index,
-                ], 
-                "shadow_stack_gep"
-            );
-            
-            self.builder.build_store(
-                shadow_stack_ptr, 
-                value
+                self.context.f64_type().array_type(1024 * 8),
+                stack_ptr,
+                &[self.context.i32_type().const_zero(), index],
+                "shadow_stack_gep",
             );
 
-            return index
+            self.builder.build_store(shadow_stack_ptr, value);
+
+            return index;
         }
     }
 
-    fn pop_shadow_stack(&self){
+    fn pop_shadow_stack(&self) {
         let cursor = self.module.get_global("shadow_stack_cursor").unwrap();
 
         let re = self.builder.build_atomicrmw(
-            inkwell::AtomicRMWBinOp::Sub, 
-            cursor.as_pointer_value(), 
-            self.context.i32_type().const_int(1, false), 
-            inkwell::AtomicOrdering::SequentiallyConsistent
+            inkwell::AtomicRMWBinOp::Sub,
+            cursor.as_pointer_value(),
+            self.context.i32_type().const_int(1, false),
+            inkwell::AtomicOrdering::SequentiallyConsistent,
         );
 
-        if let Err(e) = re{
+        if let Err(e) = re {
             panic!("{}", e)
         }
     }
 
-    fn increment_rc(&self, value: FloatValue<'ctx>){
-        
-    }
+    fn increment_rc(&self, value: FloatValue<'ctx>) {}
 
-    fn decrement_rc(&self, value: FloatValue<'ctx>){
+    fn decrement_rc(&self, value: FloatValue<'ctx>) {}
 
-    }
-
-    fn batch_decrement_rc(&self, ptr: PointerValue<'ctx>, length: IntValue<'ctx>){
-
-    }
+    fn batch_decrement_rc(&self, ptr: PointerValue<'ctx>, length: IntValue<'ctx>) {}
 
     fn read_acc(&self) -> FloatValue<'ctx> {
         self.builder
@@ -871,7 +856,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
     }
 
     fn write_acc(&self, value: FloatValue<'ctx>) {
-        let old = self.builder.build_load(self.context.f64_type(), self.acc, "desc_acc");
+        let old = self
+            .builder
+            .build_load(self.context.f64_type(), self.acc, "desc_acc");
         self.decrement_rc(old.into_float_value());
 
         self.builder.build_store(self.acc, value);
@@ -899,7 +886,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
             let p = *p;
 
             // read the old value and decrement count
-            let old = self.builder.build_load(self.context.f64_type(), p, "desc_temp");
+            let old = self
+                .builder
+                .build_load(self.context.f64_type(), p, "desc_temp");
             self.decrement_rc(old.into_float_value());
 
             p
@@ -917,7 +906,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
         let mut temps = self.temps.borrow_mut();
         let p = temps.remove(&temp).unwrap();
 
-        let value = self.builder.build_load(self.context.f64_type(), p, "destroy_temp");
+        let value = self
+            .builder
+            .build_load(self.context.f64_type(), p, "destroy_temp");
         self.decrement_rc(value.into_float_value());
     }
 
@@ -963,7 +954,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
             .expect("failed to remove arg list");
 
         // decrement rc
-        for _v in list{
+        for _v in list {
             //self.decrement_rc(v);
         }
     }
@@ -979,21 +970,28 @@ impl<'ctx> FunctionBuilder<'ctx> {
         let alloc_length = self
             .builder
             .build_alloca(self.context.i32_type(), "alloc_length");
-        self.builder
-            .build_store(alloc_length, self.context.i32_type().const_int(16 * 8, false));
+        self.builder.build_store(
+            alloc_length,
+            self.context.i32_type().const_int(16 * 8, false),
+        );
 
-        let alloc_func = self.module.get_function("RT_gc_malloc_uncollectable").unwrap();
+        let alloc_func = self
+            .module
+            .get_function("RT_gc_malloc_uncollectable")
+            .unwrap();
 
         let init_ptr = self.builder.build_call(
-            alloc_func, 
-            &[
-                self.context.i32_type().const_int(16 * 8, false).into()
-            ], 
-            "RT_gc_malloc_uncollectable"
+            alloc_func,
+            &[self.context.i32_type().const_int(16 * 8, false).into()],
+            "RT_gc_malloc_uncollectable",
         );
 
         let ptr = self.builder.build_pointer_cast(
-            init_ptr.try_as_basic_value().left().unwrap().into_pointer_value(),
+            init_ptr
+                .try_as_basic_value()
+                .left()
+                .unwrap()
+                .into_pointer_value(),
             self.context.f64_type().ptr_type(AddressSpace::default()),
             "cast",
         );
@@ -1060,18 +1058,23 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 "mul",
             );
 
-            let alloc_func = self.module.get_function("RT_gc_malloc_uncollectable").unwrap();
+            let alloc_func = self
+                .module
+                .get_function("RT_gc_malloc_uncollectable")
+                .unwrap();
 
             let init_ptr = self.builder.build_call(
-                alloc_func, 
-                &[
-                    new_alloc_len.into()
-                ], 
-                "RT_gc_malloc_uncollectable"
+                alloc_func,
+                &[new_alloc_len.into()],
+                "RT_gc_malloc_uncollectable",
             );
 
             let new_buf = self.builder.build_pointer_cast(
-                init_ptr.try_as_basic_value().left().unwrap().into_pointer_value(),
+                init_ptr
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value(),
                 self.context.f64_type().ptr_type(AddressSpace::default()),
                 "cast",
             );
@@ -1088,12 +1091,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
             // free old_buf
             let free_func = self.module.get_function("RT_gc_dealloc").unwrap();
             self.builder.build_call(
-                free_func, 
-                &[
-                    old_buf.into(),
-                    alloc_length.into(),
-                ], 
-                "RT_gc_dealloc"
+                free_func,
+                &[old_buf.into(), alloc_length.into()],
+                "RT_gc_dealloc",
             );
 
             // store new alloc_length
@@ -1120,11 +1120,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
             // let elem_ptr = buf[length];
             let elem_ptr = unsafe {
                 self.builder
-                    .build_gep(self.context.f64_type(), 
-                    buf,
-                     &[length], 
-                     "gep"
-                    )
+                    .build_gep(self.context.f64_type(), buf, &[length], "gep")
             };
 
             // *elem_ptr = value
@@ -1164,9 +1160,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
             self.builder
                 .build_load(self.context.i32_type(), v_arg.alloc_length, "alloc_length");
 
-        let length = 
-            self.builder
-                .build_load(self.context.i32_type(), v_arg.length, "length");
+        let length = self
+            .builder
+            .build_load(self.context.i32_type(), v_arg.length, "length");
 
         let ptr = self.builder.build_load(
             self.context.f64_type().ptr_type(AddressSpace::default()),
@@ -1178,15 +1174,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
         self.batch_decrement_rc(ptr.into_pointer_value(), length.into_int_value());
 
         let func = self.module.get_function("RT_gc_dealloc").unwrap();
-        
-        self.builder.build_call(
-            func, 
-            &[
-                ptr.into(),
-                alloc_length.into(),
-            ], 
-            "RT_gc_dealloc"
-        );
+
+        self.builder
+            .build_call(func, &[ptr.into(), alloc_length.into()], "RT_gc_dealloc");
     }
 
     pub const NAN_BITS: u64 = 0b0111111111111000000000000000000000000000000000000000000000000000;
@@ -1255,7 +1245,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
         *cursor += 1;
 
         match next {
-            IR::Noop => {},
+            IR::Noop => {}
             IR::Debugger => {
                 // does nothing
             }
@@ -1278,7 +1268,6 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.drop_temp(*t);
             }
             IR::DeclareVar(v) => {
-
                 let mut va = self.variables.borrow_mut();
 
                 if self.ir_function.heap_variables.contains(v) {
@@ -1294,13 +1283,12 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     let ptr = p.try_as_basic_value().left().unwrap().into_pointer_value();
 
                     va.insert(*v, ptr);
-
                 } else {
-
-                    let ptr = self.builder.build_alloca(self.context.f64_type(), "alloca_variable");
+                    let ptr = self
+                        .builder
+                        .build_alloca(self.context.f64_type(), "alloca_variable");
                     va.insert(*v, ptr);
                 };
-                
             }
             IR::WriteVar(v) => {
                 let value = self.read_acc();
@@ -1311,7 +1299,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     .expect(&format!("failed to get variable {}", v));
 
                 // read the old value and decrement count
-                let old = self.builder.build_load(self.context.f64_type(), ptr, "desc_var");
+                let old = self
+                    .builder
+                    .build_load(self.context.f64_type(), ptr, "desc_var");
                 self.decrement_rc(old.into_float_value());
 
                 // increment rc and store the value
@@ -1346,14 +1336,14 @@ impl<'ctx> FunctionBuilder<'ctx> {
 
                 self.breaks.borrow_mut().push((exit, Some(label.clone())));
 
-                self.compile_until(ir, cursor, IR::EndBlock { label: label.clone() });
+                self.compile_until(ir, cursor, IR::EndBlock);
 
                 self.breaks.borrow_mut().pop();
 
                 self.builder.build_unconditional_branch(exit);
                 self.builder.position_at_end(exit);
-            },
-            IR::EndBlock { label:_ } => unreachable!(),
+            }
+            IR::EndBlock => unreachable!(),
 
             IR::Loop { label } => self.compile_loop(ir, cursor, label),
             IR::EndLoop => unreachable!(),
@@ -1543,9 +1533,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
             }
 
-            IR::LoadBigInt(b) => {
-
-            }
+            IR::LoadBigInt(b) => {}
             IR::LoadBool(b) => self.write_acc(
                 self.context
                     .f64_type()
@@ -1635,31 +1623,28 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 let func = self.module.get_function("RT_object_get_computed").unwrap();
 
                 let re = self.builder.build_call(
-                    func, 
-                    &[
-                        key.into(),
-                        obj.into()
-                    ], 
-                    "RT_object_get_computed"
+                    func,
+                    &[key.into(), obj.into()],
+                    "RT_object_get_computed",
                 );
 
                 self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
             }
             IR::ReadField { key } => {
                 let obj = self.read_acc();
-                
-                let hash:u64 = cityhasher::hash(key.as_bytes());
+
+                let hash: u64 = cityhasher::hash(key.as_bytes());
 
                 // fn(Any, u64) -> Any
                 let func = self.module.get_function("RT_object_get").unwrap();
 
                 let re = self.builder.build_call(
-                    func, 
+                    func,
                     &[
                         obj.into(),
                         self.context.i64_type().const_int(hash, false).into(),
-                    ], 
-                    "RT_object_get"
+                    ],
+                    "RT_object_get",
                 );
 
                 self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
@@ -1684,18 +1669,16 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 let func = self.module.get_function("RT_object_set").unwrap();
 
                 self.builder.build_call(
-                    func, 
+                    func,
                     &[
                         obj.into(),
                         self.context.i64_type().const_int(hashkey, false).into(),
                         value.into(),
-                    ], 
-                    "RT_object_set"
+                    ],
+                    "RT_object_set",
                 );
             }
-            IR::WriteIndex { object, index } => {
-
-            }
+            IR::WriteIndex { object, index } => {}
             IR::ObjAssign => {}
             IR::ObjCall { args, arg_len } => {}
             IR::ObjCallVarArg { var_arg } => {}
@@ -1709,24 +1692,47 @@ impl<'ctx> FunctionBuilder<'ctx> {
             IR::EqEq(lhs) => {
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_eqeq_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_eqeq_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_eqeq_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_eqeq_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_eqeq_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_eqeq_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, lhs, rhs, "eqeq");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OEQ,
+                        lhs,
+                        rhs,
+                        "eqeq",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, t, f, "select");
                     self.write_acc(re.into_float_value());
@@ -1739,14 +1745,15 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_eqeq").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_eqeq");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_eqeq");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
                 }
 
                 self.builder.position_at_end(end_block);
-
             }
             IR::EqEqEq(lhs) => {
                 let rhs = self.read_acc();
@@ -1771,27 +1778,49 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.write_acc(re.into_float_value());
             }
             IR::NotEq(lhs) => {
-
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_eqeq_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_eqeq_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_eqeq_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_eqeq_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_eqeq_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_eqeq_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, lhs, rhs, "eqeq");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OEQ,
+                        lhs,
+                        rhs,
+                        "eqeq",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, f, t, "select");
                     self.write_acc(re.into_float_value());
@@ -1804,7 +1833,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_not_eqeq").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_eqeq");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_eqeq");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -1813,7 +1844,6 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.builder.position_at_end(end_block);
             }
             IR::NotEqEq(lhs) => {
-
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
                 let is_eq = self.builder.build_float_compare(
@@ -1836,19 +1866,30 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 self.write_acc(re.into_float_value());
             }
             IR::Add(lhs) => {
-
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_add_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_add_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_add_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_add_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_add_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_add_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
@@ -1865,7 +1906,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let add = self.module.get_function("RT_add").unwrap();
-                    let re = self.builder.build_call(add, &[rhs.into(), lhs.into()], "rt_add");
+                    let re = self
+                        .builder
+                        .build_call(add, &[rhs.into(), lhs.into()], "rt_add");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -1970,24 +2013,47 @@ impl<'ctx> FunctionBuilder<'ctx> {
             IR::Gt(lhs) => {
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_gt_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_gt_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_gt_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_gt_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_gt_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_gt_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OGT, lhs, rhs, "gt");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OGT,
+                        lhs,
+                        rhs,
+                        "gt",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, t, f, "select");
                     self.write_acc(re.into_float_value());
@@ -2000,7 +2066,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_gt").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_gt");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_gt");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -2011,24 +2079,47 @@ impl<'ctx> FunctionBuilder<'ctx> {
             IR::GtEq(lhs) => {
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_gteq_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_gteq_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_gteq_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_gteq_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_gteq_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_gteq_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OGE, lhs, rhs, "gteq");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OGE,
+                        lhs,
+                        rhs,
+                        "gteq",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, t, f, "select");
                     self.write_acc(re.into_float_value());
@@ -2041,7 +2132,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_gteq").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_gteq");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_gteq");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -2052,24 +2145,47 @@ impl<'ctx> FunctionBuilder<'ctx> {
             IR::Lt(lhs) => {
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_lt_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_lt_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_lt_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_lt_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_lt_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_lt_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OLT, lhs, rhs, "lt");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OLT,
+                        lhs,
+                        rhs,
+                        "lt",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, t, f, "select");
                     self.write_acc(re.into_float_value());
@@ -2082,7 +2198,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_lt").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_lt");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_lt");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -2093,24 +2211,47 @@ impl<'ctx> FunctionBuilder<'ctx> {
             IR::LtEq(lhs) => {
                 let rhs = self.read_acc();
                 let lhs = self.read_temp(*lhs);
-                
-                let float_block = self.context.append_basic_block(self.function, "float_lteq_block");
-                let slow_block = self.context.append_basic_block(self.function, "slow_lteq_block");
-                let end_block = self.context.append_basic_block(self.function, "exit_lteq_block");
+
+                let float_block = self
+                    .context
+                    .append_basic_block(self.function, "float_lteq_block");
+                let slow_block = self
+                    .context
+                    .append_basic_block(self.function, "slow_lteq_block");
+                let end_block = self
+                    .context
+                    .append_basic_block(self.function, "exit_lteq_block");
 
                 // determind if both values are numbers
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, lhs, rhs, "float_oeq");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    lhs,
+                    rhs,
+                    "float_oeq",
+                );
 
-                self.builder.build_conditional_branch(is_number, float_block, slow_block);
-                
+                self.builder
+                    .build_conditional_branch(is_number, float_block, slow_block);
+
                 {
                     // fast path that compares two number directly
                     self.builder.position_at_end(float_block);
 
-                    let is_eq = self.builder.build_float_compare(inkwell::FloatPredicate::OLE, lhs, rhs, "lteq");
+                    let is_eq = self.builder.build_float_compare(
+                        inkwell::FloatPredicate::OLE,
+                        lhs,
+                        rhs,
+                        "lteq",
+                    );
 
-                    let t = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
-                    let f = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                    let t = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS | 0x01));
+                    let f = self
+                        .context
+                        .f64_type()
+                        .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                     let re = self.builder.build_select(is_eq, t, f, "select");
                     self.write_acc(re.into_float_value());
@@ -2123,7 +2264,9 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     self.builder.position_at_end(slow_block);
 
                     let eqeq = self.module.get_function("RT_lteq").unwrap();
-                    let re = self.builder.build_call(eqeq, &[rhs.into(), lhs.into()], "rt_lteq");
+                    let re = self
+                        .builder
+                        .build_call(eqeq, &[rhs.into(), lhs.into()], "rt_lteq");
                     self.write_acc(re.try_as_basic_value().left().unwrap().into_float_value());
 
                     self.builder.build_unconditional_branch(end_block);
@@ -2264,9 +2407,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     .build_select(is_undefined, b, a, "non_undefined");
                 self.write_acc(re.into_float_value());
             }
-            IR::In(lhs) => {
-
-            }
+            IR::In(lhs) => {}
             IR::InstanceOf(lhs) => {}
 
             IR::Bang => {
@@ -2289,7 +2430,10 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 // not supported, always returns false
                 let _value = self.read_acc();
 
-                let false_value = self.context.f64_type().const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
+                let false_value = self
+                    .context
+                    .f64_type()
+                    .const_float(f64::from_bits(Self::MASK_BOOL | Self::NAN_BITS));
 
                 self.write_acc(false_value);
             }
@@ -2301,10 +2445,16 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 let exit_block = self.context.append_basic_block(self.function, "exit_block");
 
                 // check if value is number
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, value, value, "ord");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    value,
+                    value,
+                    "ord",
+                );
 
                 // if the value is number, do nothing
-                self.builder.build_conditional_branch(is_number, fast_block, slow_block);
+                self.builder
+                    .build_conditional_branch(is_number, fast_block, slow_block);
 
                 {
                     self.builder.position_at_end(fast_block);
@@ -2339,10 +2489,16 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 let exit_block = self.context.append_basic_block(self.function, "exit_block");
 
                 // check if value is number
-                let is_number = self.builder.build_float_compare(inkwell::FloatPredicate::ORD, value, value, "ord");
+                let is_number = self.builder.build_float_compare(
+                    inkwell::FloatPredicate::ORD,
+                    value,
+                    value,
+                    "ord",
+                );
 
                 // if the value is number, do nothing
-                self.builder.build_conditional_branch(is_number, exit_block, slow_block);
+                self.builder
+                    .build_conditional_branch(is_number, exit_block, slow_block);
 
                 {
                     // convert the value into a number
@@ -2375,10 +2531,14 @@ impl<'ctx> FunctionBuilder<'ctx> {
                 let value = self.read_acc();
 
                 // cast value to u64
-                let v = self.builder.build_float_to_signed_int(value, self.context.i64_type(), "");
+                let v = self
+                    .builder
+                    .build_float_to_signed_int(value, self.context.i64_type(), "");
                 let tag = self.builder.build_and(v, self.tag_mask(), "");
 
-                let number_block = self.context.append_basic_block(self.function, "number_block");
+                let number_block = self
+                    .context
+                    .append_basic_block(self.function, "number_block");
 
                 let types = [
                     (Self::MASK_BIGINT | Self::NAN_BITS, "bigint"),
@@ -2390,13 +2550,7 @@ impl<'ctx> FunctionBuilder<'ctx> {
                     (Self::MASK_UNDEFINED | Self::NAN_BITS, "undefined"),
                 ];
 
-                self.builder.build_switch(
-                    tag, 
-                    number_block, 
-                    &[]
-                );
-
-
+                self.builder.build_switch(tag, number_block, &[]);
             }
         }
     }

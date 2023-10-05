@@ -90,6 +90,8 @@ impl JSString {
             // write the null terminator
             (ptr.as_mut_ptr() as *mut u8).add(size - 1).write(0);
 
+            ptr.hash = native_js_common::hash_string(s);
+
             return Self(ptr)
         }
     }
@@ -99,14 +101,6 @@ impl JSString {
         unsafe{
             return self.as_str().as_ptr() as _
         }
-    }
-
-    pub fn hash_key_from_utf8(s: &str) -> u64 {
-        return cityhasher::hash(s.as_bytes())
-    }
-
-    pub fn to_hash_key(&self) -> u64 {
-        return cityhasher::hash(self.as_slice())
     }
 
     pub fn find(&self, pat: Self) -> Option<usize> {

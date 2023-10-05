@@ -1,12 +1,11 @@
-mod inlining;
 mod dce;
+mod inlining;
 
 use itertools::Itertools;
 
 use crate::ir_builder::IRPackage;
 
 pub fn optimise_package(pkg: &mut IRPackage) {
-    
     inlining::resolve_maybe_static_call(pkg);
     remove_duplicate_capture_pass(pkg);
 
