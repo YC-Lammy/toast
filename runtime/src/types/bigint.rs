@@ -3,7 +3,7 @@ use iron_gc::{GcPtr, GcCell};
 
 use super::{JSValue, Any, JSString};
 
-pub struct Bigint(GcPtr<i128>);
+pub struct Bigint(pub(crate) GcPtr<i128>);
 
 
 

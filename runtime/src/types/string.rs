@@ -5,13 +5,17 @@ use super::{JSValue, Any};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct JSString(GcPtr<JSStringInner>);
+pub struct JSString(pub(crate) GcPtr<JSStringInner>);
 
 #[repr(packed)]
 struct JSStringInner{
     hash: u64,
     len:usize,
     data:[u8;0]
+}
+
+impl iron_gc::Trace for JSStringInner{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {}
 }
 
 unsafe impl Sync for JSStringInner {}
@@ -74,9 +78,17 @@ impl JSString {
 
     pub fn from_str(s: &str) -> Self {
         unsafe{
+            // one more byte for null terminator
             let size = s.len() + core::mem::size_of::<JSStringInner>() + 1;
-            let mut ptr:GcPtr<JSStringInner> = GcPtr::<u8>::malloc_array(size).cast();
+
+            // malloc
+            let mut ptr:GcPtr<JSStringInner> = GcPtr::<u8>::malloc(size).cast();
+
+            // copy string to memory
             core::ptr::copy_nonoverlapping(s.as_bytes().as_ptr(), ptr.data.as_mut_ptr(), s.len());
+
+            // write the null terminator
+            (ptr.as_mut_ptr() as *mut u8).add(size - 1).write(0);
 
             return Self(ptr)
         }

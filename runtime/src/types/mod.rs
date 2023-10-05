@@ -11,8 +11,6 @@ pub mod generator;
 pub mod async_function;
 pub mod async_generator;
 
-use rusty_ts_macro::hash;
-
 pub use function::*;
 pub use object::*;
 pub use string::*;
@@ -48,6 +46,12 @@ impl JSValue for f64{
 
     fn from_any(any:Any) -> Self {
         f64::from_bits(any.0)
+    }
+}
+
+impl<T:JSValue> From<T> for Any{
+    fn from(value: T) -> Self {
+        return value.to_any()
     }
 }
 
@@ -225,8 +229,9 @@ impl Any {
         if self.is_null() {
             return JSString::new("null");
         }
+
         if let Some(obj) = self.as_object() {
-            if let Some(v) = obj.get_property_key(hash!("toString")) {
+            if let Some(v) = obj.get_by_hash(native_js_common::hash_string("toString")) {
                 return v.call(Any::UNDEFINED, &[]).to_string()
             } else {
                 return JSString::new("[object Object]");
@@ -242,9 +247,9 @@ impl Any {
 }
 
 impl Any{
-    pub fn get_property_key(self, key:u64) -> Option<Any>{
+    pub fn get_property(self, key:JSString) -> Option<Any>{
         if let Some(obj) = &self.as_object(){
-            return obj.get_property_key(key)
+            return obj.get_property(key)
         }
         todo!()
     }
@@ -258,8 +263,24 @@ impl Any{
     }
 }
 
+impl iron_gc::Trace for Any{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        if let Some(obj) = self.as_object(){
+            visitor.visit(obj.inner);
+        }
+
+        if let Some(big) = self.as_bigint(){
+            visitor.visit(big.0)
+        }
+
+        if let Some(s) = self.as_string(){
+            visitor.visit(s.0)
+        }
+    }
+}
+
 #[test]
 fn test_validate_any(){
     assert!(993.32487f64.to_any().as_number() == Some(993.32487f64));
-    assert!(JSString::Constant("hello world").to_any().as_string() == Some(JSString::new("hello world")));
+    assert!(JSString::new("hello world").to_any().as_string() == Some(JSString::new("hello world")));
 }

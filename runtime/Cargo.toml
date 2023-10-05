@@ -21,13 +21,16 @@ num-bigint = "*"
 corosensei = "0.1.4"
 minicoroutine = "0.1.3"
 
-regress = "0.7"
+regress = {version ="0.7", default-features=false }
 
 libc = "*"
-unwinding = {version = "0.2", default-features=false, features=["unwinder", "dwarf-expr", "hide-trace", "panic-handler"]}
+unwinding = {version = "0.2", default-features=false, features=["unwinder", "dwarf-expr", "hide-trace"]}
 gimli = { version = "0.26.1", default-features = false, features = ["read-core"] }
 
 iron-gc = {path = "../iron-gc"}
+
+
+native-js-common = {version = "*", path = "../native-js-common"}
 
 [build-dependencies]
 cc = "1.0"

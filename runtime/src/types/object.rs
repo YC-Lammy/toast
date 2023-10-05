@@ -6,7 +6,10 @@ use hashbrown::HashMap;
 
 use iron_gc::GcPtr;
 
-use super::{promise::Promise, *};
+use crate::asynchronous::Promise;
+
+use super::*;
+use super::object_map::ObjectMap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -16,28 +19,23 @@ pub struct Object{
 
 #[repr(C)]
 pub struct ObjectInner{
-    /// reference count
-    rc: u32,
-
     /// internal value
     value: ObjectValue,
 
     __proto__: Option<Object>,
 
-    structure: *mut ObjectStructure,
-
-    /// capacity of array
-    cap: usize,
-    /// number of indexed properties
-    len: usize,
-    /// number of named properties
-    named_properties: usize,
-    values: GcPtr<Any>,
+    values: ObjectMap,
 }
 
 unsafe impl Sync for ObjectInner{}
 
-
+impl iron_gc::Trace for ObjectInner{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        self.values.trace(visitor);
+        
+        
+    }
+}
 
 pub enum ObjectValue {
     Empty,
@@ -62,7 +60,7 @@ impl JSValue for Object{
         Any::OBJECT_TAG
     }
     fn from_any(any:Any) -> Self {
-        Object { inner: unsafe{GcPtr::from_raw_ptr(any.data() as usize as _)} }
+        Object { inner: unsafe{GcPtr::<ObjectInner>::from_raw_ptr(any.data() as usize as _).expect("invalid pointer casted from Any.")} }
     }
 }
 
@@ -134,15 +132,21 @@ impl Object {
     pub fn new() -> Self {
         let p = GcPtr::new(
             ObjectInner { 
-                rc: 0,
-                
                 value: ObjectValue::Empty, 
                 __proto__: None,
-                structure: NULL_OBJECT_STRUCTURE.as_mut(), 
-                cap: 16, 
-                len: 0, 
-                named_properties: 0, 
-                values: GcPtr::new_array(&[Any::UNDEFINED;16])
+                values: ObjectMap::new()
+            }
+        );
+        
+        return Self{ inner: p }
+    }
+
+    pub fn new_promise(promise: Promise) -> Self{
+        let p = GcPtr::new(
+            ObjectInner { 
+                value: ObjectValue::Promise(promise), 
+                __proto__: None,
+                values: ObjectMap::new()
             }
         );
         
@@ -167,23 +171,17 @@ impl Object {
         let hkey = key.to_hash_key();
 
         // fast path
-        if let Some(offset) = ObjectStructure::from_ptr(self.inner.structure).get_property(hkey){
-            let index = self.inner.len + offset;
-            unsafe{
-                let v = self.inner.values.as_ptr().add(index).read();
-                return Some(v)
-            }
+        if let Some(value) = self.inner.values.get(&key){
+            return Some(value)
+
         } else{
             // try to parse key into index
             let s = key.as_str();
 
             if s.is_ascii(){
                 if let Some(idx) = atoi::atoi::<usize>(s.as_bytes()){
-                    if idx < self.inner.len{
-                        unsafe{
-                            let v = self.inner.values.as_ptr().add(idx).read();
-                            return Some(v)
-                        }
+                    if let Some(v) = self.inner.values.get_index(idx){
+                        return Some(v)
                     }
                 }
             }
@@ -192,35 +190,22 @@ impl Object {
             if let Some(proto) = self.inner.__proto__{
                 return proto.get_property(key)
             }
+
             return None
         }
     }
 
-    #[inline]
-    pub fn get_property_key(&self, key: u64) -> Option<Any> {
-        if let Some(offset) = ObjectStructure::from_ptr(self.inner.structure).get_property(key){
-            let index = self.inner.len + offset;
-            unsafe{
-                let v = self.inner.values.as_ptr().add(index).read();
-                return Some(v)
+    /// hash must not be generated from an integer string
+    pub fn get_by_hash(&self, hash: u64) -> Option<Any>{
+        if let Some(value) = self.inner.values.get_by_hash(hash){
+            return Some(value)
+        } else{
+            if let Some(proto) = self.inner.__proto__{
+                return proto.get_by_hash(hash)
             }
         }
+
         return None
-    }
-
-    #[inline]
-    pub fn get_property_symbol(&self, key: JSSymbol) -> Option<Any> {
-        return self.get_property_key(key.0);
-    }
-
-    fn grow(&mut self){
-        let new_cap = self.inner.cap * 2;
-        self.inner.cap = new_cap;
-        unsafe{
-            let new:GcPtr<Any> = GcPtr::malloc_array(new_cap);
-            core::ptr::copy_nonoverlapping(self.inner.values.as_ptr(), new.as_mut(), self.inner.len + self.inner.named_properties);
-            self.inner.values = new;
-        }
     }
 
     #[inline]
@@ -234,12 +219,7 @@ impl Object {
 
         // write barriar for string
         if let Some(s) = value.as_string(){
-            match s{
-                JSString::Alloc(a) => {
-                    self.inner.write_barriar(a);
-                }
-                _ => {}
-            }
+            self.inner.write_barriar(s.0);
         }
 
         // write barriar for bigint
@@ -250,84 +230,11 @@ impl Object {
         // calculate the hash key
         let hkey = key.to_hash_key();
 
-        // the property is found
-        if let Some(offset) = ObjectStructure::from_ptr(self.inner.structure).get_property(hkey){
-            let index = self.inner.len + offset;
-            unsafe{
-                self.inner.values.as_mut().add(index).write(value);
-            }
-
-        } else{
-            // try to parse key into index
-            let s = key.as_str();
-
-            // only ascii can be parsed to number
-            if s.is_ascii(){
-                // fast parsing
-                if let Some(idx) = atoi::atoi::<usize>(s.as_bytes()){
-                    if idx < self.inner.len{
-                        unsafe{
-                            self.inner.values.as_mut().add(idx).write(value);
-                        }
-
-                        return;
-
-                    } else{
-                        let d = self.inner.len - idx;
-
-                        // the number of empty slots is less then 32
-                        if d < 32{
-                            
-                            // push undefined
-                            for _ in 0..d{
-                                self.push(Any::UNDEFINED);
-                            };
-
-                            // push the actual value
-                            self.push(value);
-
-                            return;
-                        }
-                    }
-                }
-            };
-
-            // fallback
-
-            // extend current structure
-            self.inner.structure = ObjectStructure::from_ptr(self.inner.structure).add_property(s);
-            self.inner.named_properties += 1;
-
-            // overflow resize required
-            if self.inner.named_properties + self.inner.len > self.inner.cap{
-                // resize array
-                self.grow();
-            }
-
-            // calculate offset
-            let idx = self.inner.len + self.inner.named_properties -1;
-
-            unsafe{
-                self.inner.values.as_mut().add(idx).write(value);
-            }
-        }
+        self.inner.values.set(&key, value);
     }
 
     pub fn push(&mut self, value:Any){
-        if self.inner.len + self.inner.named_properties >= self.inner.cap{
-            self.grow();
-        }
-
-        let idx = self.inner.len;
-        self.inner.len += 1;
-
-        unsafe{
-            if self.inner.named_properties != 0{
-                core::ptr::copy(self.inner.values.as_ptr().add(idx), self.inner.values.as_mut().add(idx + 1), self.inner.named_properties);
-            }
-
-            self.inner.values.as_mut().add(idx).write(value);
-        }; 
+        self.inner.values.push(value);
     }
 
     #[inline]

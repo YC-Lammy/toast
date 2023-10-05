@@ -2,10 +2,6 @@
 use alloc::vec::Vec;
 use parking_lot::RwLock;
 
-use rusty_ts_macro::{tssting, hash};
-
-use crate::utils::GcHashMap;
-
 use super::JSString;
 
 lazy_static::lazy_static! {
@@ -26,7 +22,15 @@ lazy_static::lazy_static! {
             "@@unscopables"
         ];
 
-        let mut v = Vec::new();
+        let mut v = Vec::with_capacity(builtins.len());
+
+        for b in builtins{
+            let s = JSString::new(b);
+            s.0.set_uncollectable();
+
+            v.push((s.hash(), s));
+        }
+
         RwLock::new(v)
     };
 }
@@ -36,8 +40,7 @@ lazy_static::lazy_static! {
 pub struct JSSymbol(pub u64);
 
 impl JSSymbol {
-    pub const ASYN_ITERATOR: Self = Self(hash!("@@asyncIterator"));
-
+    
     pub fn as_str(self) -> JSString {
         let syms = SYMBOL_STRINGS.read();
 
@@ -47,6 +50,6 @@ impl JSSymbol {
             }
         };
 
-        unreachable!()
+        return JSString::new("@@unknown")
     }
 }

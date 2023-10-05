@@ -2,6 +2,13 @@
 use super::Any;
 
 use iron_gc::GcPtr;
+use iron_gc::Array;
+
+#[repr(C)]
+pub struct FunctionDescriptor{
+    pub num_args: u8,
+    pub var_arg: bool,
+}
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -22,8 +29,7 @@ pub struct TSFuncPtr(
 pub struct Closure {
     pub ptr: TSFuncPtr,
     pub this: Option<Any>,
-    /// *mut [ *mut Any ]
-    pub captures: GcPtr<GcPtr<Any>>,
+    pub captures: GcPtr<Array<GcPtr<Any>>>,
 }
 
 #[derive(Clone)]
@@ -31,7 +37,7 @@ pub struct Closure {
 pub struct FunctionBind {
     ptr: TSFuncPtr,
     this: Any,
-    captures: GcPtr<GcPtr<Any>>,
+    captures: GcPtr<Array<Any>>,
     args: GcPtr<Any>,
     arg_len: usize
 }
@@ -152,7 +158,7 @@ impl TSFuncPtr {
 impl Closure{
     #[inline]
     pub fn call(&self, this:Any, args:&[Any]) -> Any{
-        return self.ptr.dynamic_call(self.this.unwrap_or(this), self.captures.as_double_ptr(), args.len() as u32, args.as_ptr())
+        return self.ptr.dynamic_call(self.this.unwrap_or(this), self.captures.as_ptr(), args.len() as u32, args.as_ptr())
     }
 }
 

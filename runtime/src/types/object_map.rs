@@ -6,16 +6,23 @@ use iron_gc::GcPtr;
 use super::{JSString, Any};
 
 lazy_static::lazy_static!{
-    static ref ROOT: GcPtr<TypeMap> = GcPtr::new(
-        TypeMap { 
-            hash: 0,
-            index: 0,
-            key: JSString::new("constructor"),
-            parent: None,
-            childrens: Vec::new()
-        }
-    );
+    static ref ROOT: GcPtr<TypeMap> = {
+        let ptr = GcPtr::new(
+            TypeMap { 
+                hash: 0,
+                index: 0,
+                key: JSString::new("constructor"),
+                parent: None,
+                childrens: Vec::new()
+            }
+        );
+        // root Type Map
+        ptr.set_root();
+
+        ptr
+    };
 }
+
 
 #[repr(C)]
 pub struct TypeMap{
@@ -24,6 +31,20 @@ pub struct TypeMap{
     key: JSString,
     parent: Option<GcPtr<TypeMap>>,
     childrens: Vec<(u64, GcPtr<TypeMap>)>,
+}
+
+impl iron_gc::Trace for TypeMap{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        visitor.visit(self.key.0);
+        
+        if let Some(p) = self.parent{
+            visitor.visit(p);
+        }
+
+        for (_, child) in &self.childrens{
+            visitor.visit(*child);
+        }
+    }
 }
 
 impl TypeMap{
@@ -80,6 +101,8 @@ impl TypeMap{
     }
 }
 
+
+
 pub struct ObjectMap{
     type_map: GcPtr<TypeMap>,
     array_length: usize,
@@ -98,9 +121,10 @@ impl ObjectMap{
     pub fn get_index(&self, index: usize) -> Option<Any>{
         if index < self.array_length{
             return Some(self.values[index])
+        } else{
+            let hash = native_js_common::hash_integer(index);
+            return self.get_by_hash(hash)
         }
-
-        index.as_s
     }
 
     pub fn get(&mut self, key: &JSString) -> Option<Any>{
@@ -116,11 +140,41 @@ impl ObjectMap{
         return None;
     }
 
+    /// extending an object is costly
     pub fn set(&mut self, key: &JSString, value: Any){
         if let Some(index) = self.type_map.get_index_by_hash(key.hash()){
             let index = index + self.array_length;
             self.values[index] = value;
+
         } else{
+            if key.as_str().is_ascii(){
+                if let Some(idx) = atoi::atoi::<usize>(key.as_slice()){
+
+                    if idx == self.array_length{
+                        self.values.insert(idx, value);
+                        self.array_length += 1;
+                        return;
+                    }
+
+                    if idx < self.array_length{
+                        self.values[idx] = value;
+                        return;
+                    }
+
+                    if idx < self.array_length + 64{
+                        let extend_length = idx.abs_diff(self.array_length) + 1;
+                        self.values.resize(self.values.len() + extend_length, Any::UNDEFINED);
+
+                        self.values.copy_within(self.array_length.., self.array_length + extend_length);
+                        
+                        self.array_length += extend_length;
+                        self.values[idx] = value;
+
+                        return;
+                    }
+                }
+            };
+
             let child = self.type_map.make_child(*key);
 
             let index = child.index + self.array_length;
@@ -128,6 +182,27 @@ impl ObjectMap{
             self.type_map = child;
 
             self.values.push(value);
+        }
+    }
+
+    pub fn push(&mut self, value: Any){
+        let idx = self.array_length;
+        self.array_length += 1;
+        
+        if self.values.len() == idx{
+            self.values.push(value);
+        } else{
+            self.values.insert(idx, value);
+        }
+    }
+}
+
+impl iron_gc::Trace for ObjectMap{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        visitor.visit(self.type_map);
+
+        for v in &self.values{
+            v.trace(visitor);
         }
     }
 }
