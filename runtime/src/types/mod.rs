@@ -15,9 +15,8 @@ pub use object::*;
 pub use string::*;
 pub use symbol::*;
 
-use crate::rt;
-
 use self::bigint::Bigint;
+
 
 pub trait JSValue{
     fn data_bits(&self) -> u64;
@@ -251,9 +250,9 @@ impl Any{
     pub fn call(self, this:Any, args:&[Any]) -> Any{
         if let Some(obj) = self.as_object(){
             return obj.call(this, args)
+        } else{
+            crate::unwinding::throw(Any::error("Cannot call on non function object"));
         }
-        unsafe{rt::RT_throw(Any::error("call on non function."))};
-        return Any::UNDEFINED
     }
 }
 

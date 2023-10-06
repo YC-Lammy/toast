@@ -1,8 +1,4 @@
 
-use alloc::boxed::Box;
-use alloc::string::String;
-use hashbrown::HashMap;
-//use crate::bdwgc;
 
 use iron_gc::GcPtr;
 
@@ -203,9 +199,8 @@ impl Object {
             ObjectValue::AsyncGeneratorFunction(g) => {
                 todo!()
             }
-            _ => unsafe{
-                rt::RT_throw(Any::error("Call on non function object"));
-                return Any::UNDEFINED
+            _ => {
+                crate::unwinding::throw(Any::error("Call on non function object"));
             }
         }
     }

@@ -11,3 +11,10 @@ mod panicking;
 
 pub use personality::rust_eh_personality;
 pub use panic::begin_panic;
+
+use crate::types::Any;
+
+
+pub fn throw(value: Any) -> !{
+    todo!()
+}

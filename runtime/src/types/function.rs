@@ -1,6 +1,7 @@
 
 use super::Any;
 
+use alloc::vec::Vec;
 use iron_gc::GcPtr;
 use iron_gc::Array;
 
@@ -38,7 +39,7 @@ pub struct FunctionBind {
     ptr: TSFuncPtr,
     this: Any,
     captures: GcPtr<Array<Any>>,
-    args: GcPtr<Any>,
+    args: Vec<Any>,
     arg_len: usize
 }
 
