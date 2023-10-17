@@ -1,5 +1,6 @@
+use alloc::string::String;
 
-use regress::{Regex, Error};
+
 
 pub struct Regexp{
     
@@ -11,14 +12,10 @@ pub struct Regexp{
     unicode: bool,
     unicode_sets: bool,
     sticky: bool,
-    
-    reg: Regex
 }
 
 impl Regexp{
-    pub fn new(pattern: &str, flags: &str) -> Result<Self, Error>{
-        let reg = Regex::with_flags(pattern, flags)?;
-
+    pub fn new(pattern: &str, flags: &str) -> Result<Self, String>{
         return Ok(Self{
             has_indices: flags.contains('d'),
             global_search: flags.contains('g'),
@@ -29,7 +26,6 @@ impl Regexp{
             unicode_sets: flags.contains('v'),
             sticky: flags.contains('y'),
 
-            reg: reg
         })
     }
 }

@@ -5,21 +5,30 @@ use super::{JSValue, Any};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct JSString(pub(crate) GcPtr<JSStringInner>);
+pub struct JSString(GcPtr<JSStringInner>);
 
 #[repr(packed)]
-struct JSStringInner{
+pub struct JSStringInner{
     hash: u64,
     len:usize,
     data:[u8;0]
 }
 
 impl iron_gc::Trace for JSStringInner{
+    fn additional_bytes(&self) -> usize {
+        return self.len
+    }
     fn trace(&mut self, visitor: &mut iron_gc::Visitor) {}
 }
 
 unsafe impl Sync for JSStringInner {}
 unsafe impl Send for JSStringInner {}
+
+impl iron_gc::Trace for JSString{
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        visitor.visit(self.0)
+    }
+}
 
 impl PartialEq for JSString {
     fn eq(&self, other: &Self) -> bool {
@@ -111,6 +120,14 @@ impl JSString {
         self.as_slice()
             .windows(pat.len())
             .position(|chunck| chunck == pat)
+    }
+
+    pub fn write_barriar<T:iron_gc::Trace>(&self, other: GcPtr<T>){
+        other.write_barriar(self.0);
+    }
+
+    pub fn set_uncollectable(&self){
+        self.0.set_uncollectable();
     }
 }
 

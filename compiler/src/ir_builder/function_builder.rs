@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,18 +14,23 @@ use super::{
     IRContainer, VariableId,
 };
 
+static GLOBAL_FUNCTION_ID: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct FunctionId(uuid::Uuid);
+pub struct FunctionId(u64);
 
 impl FunctionId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
+        Self(GLOBAL_FUNCTION_ID.fetch_add(1, Ordering::SeqCst))
     }
 }
 
-impl ToString for FunctionId {
-    fn to_string(&self) -> String {
-        self.0.to_string()
+impl core::fmt::Display for FunctionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FunctionId(")?;
+        let mut buf = native_js_common::itoa::Buffer::new();
+        f.write_str(buf.format(self.0))?;
+        f.write_str(")")
     }
 }
 

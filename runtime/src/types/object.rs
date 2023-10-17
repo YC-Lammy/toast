@@ -8,8 +8,27 @@ use super::*;
 use super::object_map::ObjectMap;
 use super::regex::Regexp;
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ObjectInternal {
+    Empty,
+    Function,
+    FunctionBind,
+    Closure,
+    Generator,
+    RegEx,
+    Promise,
+
+    String,
+    Symbol,
+    Boolean,
+    Number,
+    BigInt,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct Object{
     pub(crate) inner: GcPtr<ObjectInner>
 }
@@ -17,37 +36,11 @@ pub struct Object{
 #[repr(C)]
 pub struct ObjectInner{
     /// internal value
-    value: ObjectValue,
+    internal: ObjectInternal,
 
     __proto__: Option<Object>,
 
     values: ObjectMap,
-}
-
-unsafe impl Sync for ObjectInner{}
-
-impl iron_gc::Trace for ObjectInner{
-    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
-        self.values.trace(visitor);
-        
-        
-    }
-}
-
-pub enum ObjectValue {
-    Empty,
-    Function(TSFuncPtr),
-    FunctionBind(FunctionBind),
-    Closure(Closure),
-    AsyncFunction(Closure),
-    GeneratorFunction(Closure),
-    AsyncGeneratorFunction(Closure),
-    Generator(),
-    RegEx(Regexp),
-    Promise(Promise),
-    Boolean(bool),
-    Symbol(JSSymbol),
-    Number(f64),
 }
 
 impl JSValue for Object{
@@ -66,8 +59,8 @@ impl Object {
     #[inline]
     pub fn new() -> Self {
         let p = GcPtr::new(
-            ObjectInner { 
-                value: ObjectValue::Empty, 
+            ObjectInner {
+                internal: ObjectInternal::Empty, 
                 __proto__: None,
                 values: ObjectMap::new()
             }
@@ -79,11 +72,16 @@ impl Object {
     pub fn new_promise(promise: Promise) -> Self{
         let p = GcPtr::new(
             ObjectInner { 
-                value: ObjectValue::Promise(promise), 
+                internal: ObjectInternal::Promise, 
                 __proto__: None,
                 values: ObjectMap::new()
             }
         );
+
+        unsafe{
+            let ptr = p.as_ptr().add(1) as *mut Promise;
+            ptr.write(promise);
+        }
         
         return Self{ inner: p }
     }
@@ -91,31 +89,23 @@ impl Object {
     pub fn new_regex(reg: Regexp) -> Self{
         let p = GcPtr::new(
             ObjectInner { 
-                value: ObjectValue::RegEx(reg), 
+                internal: ObjectInternal::RegEx, 
                 __proto__: None,
                 values: ObjectMap::new()
             }
         );
+
+        unsafe{
+            let ptr = p.as_ptr().add(1) as *mut Regexp;
+            ptr.write(reg);
+        }
         
         return Self{ inner: p }
     }
+    
 
     #[inline]
-    pub fn set_internal(&mut self, value: ObjectValue){
-        self.inner.value = value;
-    }
-
-    #[inline]
-    pub fn as_promise(&mut self) -> Option<&mut Promise>{
-        match &mut self.inner.value{
-            ObjectValue::Promise(p) => Some(p),
-            _ => None
-        }
-    }
-
-    #[inline]
-    pub fn get_property(&self, key: JSString) -> Option<Any> {
-        let hkey = key.hash();
+    pub fn get_property(&mut self, key: JSString) -> Option<Any> {
 
         // fast path
         if let Some(value) = self.inner.values.get(&key){
@@ -134,7 +124,7 @@ impl Object {
             }
 
             // try to read it from prototype
-            if let Some(proto) = self.inner.__proto__{
+            if let Some(proto) = &mut self.inner.__proto__{
                 return proto.get_property(key)
             }
 
@@ -166,16 +156,13 @@ impl Object {
 
         // write barriar for string
         if let Some(s) = value.as_string(){
-            self.inner.write_barriar(s.0);
+            s.write_barriar(self.inner);
         }
 
         // write barriar for bigint
         if let Some(b) = value.as_bigint(){
             self.inner.write_barriar(b.as_gc_ptr());
         }
-
-        // calculate the hash key
-        let hkey = key.hash();
 
         self.inner.values.set(&key, value);
     }
@@ -185,24 +172,192 @@ impl Object {
     }
 
     #[inline]
-    pub fn call(&self, this:Any, args:&[Any]) -> Any{
-        match &self.inner.value{
-            ObjectValue::Function(f) => f.dynamic_call(this, 0 as _, args.len() as _, args.as_ptr()),
-            ObjectValue::Closure(c) => c.call(this, args),
-            ObjectValue::FunctionBind(f) => f.call(args),
-            ObjectValue::AsyncFunction(c) => {
-                todo!()
-            }
-            ObjectValue::GeneratorFunction(c) => {
-                todo!()
-            }
-            ObjectValue::AsyncGeneratorFunction(g) => {
-                todo!()
-            }
-            _ => {
-                crate::unwinding::throw(Any::error("Call on non function object"));
+    pub fn call(&mut self, this:Any, args:&[Any]) -> Any{
+        if let Some(func) = self.inner.as_function(){
+            return func.dynamic_call(this, 0 as _, args.len() as u32, args.as_ptr())
+        }
+
+        if let Some(func) = self.inner.as_function_bind(){
+            return func.call(args)
+        }
+
+        if let Some(cl) = self.inner.as_closure(){
+            return cl.call(this, args)
+        }
+
+        crate::unwinding::throw(Any::error("cannot call on non function object"))
+    }
+}
+
+unsafe impl Sync for ObjectInner{}
+
+impl iron_gc::Trace for ObjectInner{
+    fn additional_bytes(&self) -> usize {
+        use core::mem::size_of;
+
+        match self.internal{
+            ObjectInternal::Empty => 0,
+            ObjectInternal::Boolean => size_of::<bool>(),
+            ObjectInternal::Closure => size_of::<Closure>(),
+            ObjectInternal::FunctionBind => size_of::<FunctionBind>(),
+            ObjectInternal::Function => size_of::<JSFunc>(),
+            ObjectInternal::Generator => todo!(),
+            ObjectInternal::Number => size_of::<f64>(),
+            ObjectInternal::Promise => size_of::<Promise>(),
+            ObjectInternal::RegEx => size_of::<Regexp>(),
+            ObjectInternal::String => size_of::<JSString>(),
+            ObjectInternal::Symbol => size_of::<JSSymbol>(),
+            ObjectInternal::BigInt => size_of::<u128>()
+        }
+    }
+
+    fn trace(&mut self, visitor: &mut iron_gc::Visitor) {
+        self.values.trace(visitor);
+
+        if let Some(proto) = &mut self.__proto__{
+            proto.inner.trace(visitor);
+        }
+
+        if let Some(cl) = self.as_closure(){
+            cl.trace(visitor);
+            return;
+        }
+
+        if let Some(func) = self.as_function_bind(){
+            func.trace(visitor);
+            return;
+        }
+
+        if let Some(_gen) = self.as_generator(){
+            todo!()
+        }
+
+        if let Some(p) = self.as_promise(){
+            p.trace(visitor);
+            return;
+        }
+
+        if let Some(_reg) = self.as_regex(){
+            
+        }
+
+        if let Some(s) = self.as_string(){
+            s.trace(visitor);
+            return;
+        }
+    }
+}
+
+impl ObjectInner{
+    pub fn as_function(&mut self) -> Option<&mut JSFunc>{
+        if self.internal == ObjectInternal::Function{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut JSFunc;
+                return ptr.as_mut()
             }
         }
+        return None
+    }
+
+    pub fn as_function_bind(&mut self) -> Option<&mut FunctionBind>{
+        if self.internal == ObjectInternal::FunctionBind{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut FunctionBind;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_closure(&mut self) -> Option<&mut Closure>{
+        if self.internal == ObjectInternal::Closure{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut Closure;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_generator(&mut self) -> Option<&mut ()>{
+        if self.internal == ObjectInternal::Generator{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut ();
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_regex(&mut self) -> Option<&mut Regexp>{
+        if self.internal == ObjectInternal::RegEx{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut Regexp;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    #[inline]
+    pub fn as_promise(&mut self) -> Option<&mut Promise>{
+        if self.internal == ObjectInternal::Promise{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut Promise;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_string(&mut self) -> Option<&mut JSString>{
+        if self.internal == ObjectInternal::String{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut JSString;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_symbol(&mut self) -> Option<&mut JSSymbol>{
+        if self.internal == ObjectInternal::Symbol{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut JSSymbol;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_bool(&mut self) -> Option<&mut bool>{
+        if self.internal == ObjectInternal::Boolean{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut bool;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_number(&mut self) -> Option<&mut f64>{
+        if self.internal == ObjectInternal::Function{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut f64;
+                return ptr.as_mut()
+            }
+        }
+        return None
+    }
+
+    pub fn as_bigint(&mut self) -> Option<&mut i128>{
+        if self.internal == ObjectInternal::Function{
+            unsafe{
+                let ptr = (self as *mut Self).add(1) as *mut i128;
+                return ptr.as_mut()
+            }
+        }
+        return None
     }
 }
 

@@ -26,7 +26,7 @@ lazy_static::lazy_static! {
 
         for b in builtins{
             let s = JSString::new(b);
-            s.0.set_uncollectable();
+            s.set_uncollectable();
 
             v.push((s.hash(), s));
         }

@@ -1,42 +1,41 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use swc_atoms::JsWord;
 
 use serde::{Deserialize, Serialize};
 
 use super::{FunctionId, VariableId};
 
+static GLOBAL_ITER_ID: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct IterId(uuid::Uuid);
+pub struct IterId(u64);
 
 impl IterId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
+        Self(GLOBAL_ITER_ID.fetch_add(1, Ordering::SeqCst))
     }
 }
 
+static GLOBAL_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TempId(uuid::Uuid);
+pub struct TempId(u64);
 
 impl TempId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
+        Self(GLOBAL_TEMP_ID.fetch_add(1, Ordering::SeqCst))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct VarArgId(uuid::Uuid);
-
-impl VarArgId {
-    pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
-    }
-}
+static GLOBAL_ARGLIST_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ArgListId(uuid::Uuid);
+pub struct ArgListId(u64);
 
 impl ArgListId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
+        Self(GLOBAL_ARGLIST_ID.fetch_add(1, Ordering::SeqCst))
     }
 }
 
@@ -147,7 +146,6 @@ pub enum IR {
     ///
     /// call the function dynamically
     Call {
-        this: TempId,
         arg_len: usize,
         args: ArgListId,
         maybe_static: Option<FunctionId>,
@@ -156,12 +154,9 @@ pub enum IR {
     ///
     /// call the function with an array as arguments
     CallVarArgs {
-        this: TempId,
-        args_array: TempId
+        args_array: TempId,
     },
     /// call a function statically
-    ///
-    /// read 'arg_len' numbers of stack slots for arguments
     CallStatic {
         func_id: FunctionId,
         arg_len: usize,

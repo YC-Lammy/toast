@@ -1,21 +1,28 @@
+use alloc::string::String;
 
-#[derive(Debug)]
-pub struct Pattern {
-    pub disjunction: Disjunction,
-    pub capture_groups: usize,
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureGroup{
+    pub name: Option<String>,
+    pub is_capturing: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
+pub struct Pattern {
+    pub disjunction: Disjunction,
+    pub capture_groups: Vec<CaptureGroup>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Disjunction {
     pub alternatives: Vec<Alternative>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Alternative {
     pub terms: Vec<Term>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Term {
     Assertion(Assertion),
     Atom {
@@ -24,7 +31,7 @@ pub enum Term {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Assertion {
     /// ```^```
     ///
@@ -52,6 +59,23 @@ pub enum Assertion {
     NegativeLookBehind(Disjunction),
 }
 
+impl Assertion{
+    pub fn is_lookahead(&self) -> bool{
+        match self {
+            Self::LookAhead(_) => true,
+            Self::NegativeLookahead(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_lookbehind(&self) -> bool{
+        match self {
+            Self::LookBehind(_) => true,
+            Self::NegativeLookBehind(_) => true,
+            _ => false,
+        }
+    }
+}
+
 ///  By default quantifiers like * and + are "greedy", meaning that they try to match as much of the string as possible.
 ///
 /// The ? character after the quantifier makes the quantifier "non-greedy": meaning that it will stop as soon as it finds a match.
@@ -61,83 +85,40 @@ pub enum Assertion {
 /// ```/<.*>/``` will match "\<foo> \<bar> new \</bar> \</foo>"
 ///
 /// ```/<.*?>/``` will match "\<foo>"
-#[derive(Debug)]
-pub enum Quantifier {
-    /// ```x*```
-    ///
-    /// Matches the preceding item "x" 0 or more times.
-    Star { greedy: bool },
-    /// ```x{ n }``` or ```x+```
-    ///
-    /// Where "n" is a positive integer, matches exactly "n" occurrences of the preceding item "x".
-    Repeat { n: u32, greedy: bool },
-    /// ```x{ n ,}```
-    ///
-    /// Where "n" is a positive integer, matches at least "n" occurrences of the preceding item "x".
-    RepeatAtleast { n: u32, greedy: bool },
-    /// ```x{ n, m }``` or ```x?```
-    ///
-    /// Where "n" is 0 or a positive integer, "m" is a positive integer, and m > n, matches at least "n" and at most "m" occurrences of the preceding item "x".
-    RepeatLimited { n: u32, m: u32, greedy: bool },
+#[derive(Debug, PartialEq, Eq)]
+pub struct  Quantifier {
+    pub min: u32,
+    pub max: u32,
+    pub greedy: bool,
 }
 
 impl Quantifier{
-    pub fn min(&self) -> u32{
-        match self{
-            Self::Repeat { n, .. } => *n,
-            Self::RepeatAtleast { n, .. } => *n,
-            Self::RepeatLimited { n, .. } => *n,
-            Self::Star { .. } => 0
-        }
-    }
 
-    pub fn max(&self) -> u32{
-        match self{
-            Self::Repeat { .. } => u32::MAX,
-            Self::RepeatAtleast { .. } => u32::MAX,
-            Self::RepeatLimited { m, .. } => *m,
-            Self::Star { .. } => u32::MAX
-        }
-    }
-
-    pub fn greedy(&self) -> bool{
-        match self{
-            Self::Repeat { greedy, .. } => *greedy,
-            Self::RepeatAtleast { greedy, .. } => *greedy,
-            Self::RepeatLimited {  greedy, .. } => *greedy,
-            Self::Star { greedy } => *greedy
-        }
-    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Atom {
-    PatternCharacter(char),
-    Character(Character),
-    CharacterClass(CharacterClass),
+    Any,
+    Character(char),
 
-    ClassRange(CharacterClassRanges),
+    CharacterClassEscape(CharacterClassEscape),
+    CharacterClass(CharacterClassRanges),
 
     /// ( opt GroupSpecifier Disjunction )
     CapturingGroup{
         index: u32,
-        name: Option<Box<[char]>>,
         disjunction: Disjunction
-    },
-    NonCapturingGroup{
-        index: u32,
-        disjunction: Disjunction,
     },
     BackReferenceIndex{
         index: u32,
     },
     BackReferenceNamed{
-        name: Box<[char]>
+        name: String
     },
 }
 
-#[derive(Debug)]
-pub enum CharacterClass {
+#[derive(Debug, PartialEq, Eq)]
+pub enum CharacterClassEscape {
     /// \d
     Digits,
     /// \D
@@ -153,48 +134,25 @@ pub enum CharacterClass {
     Property(UnicodePropertyValue),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UnicodePropertyValue {
-    pub name: Option<Box<[char]>>,
-    pub value: Option<Box<[char]>>
+    pub name: String,
+    pub value: String
 }
 
-#[derive(Debug)]
-pub enum Character{
-    /// ```.```
-    Any,
-    /// ```\f```
-    FormFeed,
-    /// ```\r```
-    Carriage,
-    /// ```\n```
-    LineFeed,
-    /// ```\t```
-    HorizontalTab,
-    /// ```\v```
-    VerticalTab,
-    /// ```\cX```
-    ControlChar(char),
-    Char(char),
-} 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CharacterClassRanges{
     pub is_negative: bool,
     pub ranges: Vec<ClassRange>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ClassRange{
     /// single character class range
     Char(char),
-    /// -a
-    To(char),
-    /// a-
-    From(char),
     /// a-z
     Range(char, char),
-    CharacterClass(CharacterClass),
-    Character(Character),
     Backspace,
+    CharacterClassEscape(CharacterClassEscape),
 }

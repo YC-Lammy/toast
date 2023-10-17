@@ -125,6 +125,11 @@ impl<'a> Parser<'a> {
         let mut v = Vec::new();
 
         while self.cursor < self.input.len() {
+            // in a lookahead
+            if self.peek() == Some(')'){
+                break;
+            }
+
             v.push(self.parse_alternative(unicode_mode, N)?);
 
             if self.cursor >= self.input.len(){
@@ -143,7 +148,12 @@ impl<'a> Parser<'a> {
         let mut terms = Vec::new();
 
         while self.cursor < self.input.len() {
+            // in a disjunction
             if self.peek() == Some('|'){
+                break;
+            }
+            // in a lookahead
+            if self.peek() == Some(')'){
                 break;
             }
             let term = self.parse_term(unicode_mode, N)?;
@@ -243,18 +253,18 @@ impl<'a> Parser<'a> {
         let old_cursor = self.cursor;
 
         if self.match_char('*') {
-            let greedy = self.match_char('?');
-            return Ok(Some(Quantifier::Star { greedy }));
+            let greedy = !self.match_char('?');
+            return Ok(Some(Quantifier { min: 0, max: u32::MAX, greedy: greedy }));
         }
 
         if self.match_char('+') {
-            let greedy = self.match_char('?');
-            return Ok(Some(Quantifier::RepeatAtleast { n: 1, greedy }));
+            let greedy = !self.match_char('?');
+            return Ok(Some(Quantifier { min: 1, max: u32::MAX, greedy: greedy }));
         }
 
         if self.match_char('?') {
-            let greedy = self.match_char('?');
-            return Ok(Some(Quantifier::RepeatLimited { n: 0, m: 1, greedy }));
+            let greedy = !self.match_char('?');
+            return Ok(Some(Quantifier { min: 0, max: 1, greedy: greedy }));
         }
 
         if self.match_char('{') {
@@ -263,8 +273,8 @@ impl<'a> Parser<'a> {
                 // close
                 if self.match_char('}') {
                     // greedy
-                    let greedy = self.match_char('?');
-                    return Ok(Some(Quantifier::Repeat { n: n, greedy }));
+                    let greedy = !self.match_char('?');
+                    return Ok(Some(Quantifier { min: n, max: n, greedy: greedy }));
 
                 } else if self.match_char(',') {
                     // limited repeats
@@ -272,13 +282,13 @@ impl<'a> Parser<'a> {
                         // close
                         if self.match_char('}') {
                             // greedy
-                            let greedy = self.match_char('?');
+                            let greedy = !self.match_char('?');
 
                             if n > m{
                                 self.cursor = old_cursor;
                                 return Err(SyntexError::msg("numbers out of order in {} quantifier", self.cursor))
                             }
-                            return Ok(Some(Quantifier::RepeatLimited { n, m, greedy }));
+                            return Ok(Some(Quantifier { min: n, max: m, greedy: greedy }));
                         }
                     } else {
                         // at leat n repeats
@@ -286,8 +296,8 @@ impl<'a> Parser<'a> {
                         // close
                         if self.match_char('}') {
                             // greedy
-                            let greedy = self.match_char('?');
-                            return Ok(Some(Quantifier::RepeatAtleast { n, greedy }));
+                            let greedy = !self.match_char('?');
+                            return Ok(Some(Quantifier { min: n, max: u32::MAX, greedy: greedy }));
                         }
                     }
                 }
@@ -477,8 +487,10 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let new_cursor = self.cursor;
         self.cursor = old_cursor;
-        return Err(SyntexError::msg("Invalid atom", self.cursor));
+        
+        return Err(SyntexError::msg("Invalid atom", new_cursor));
     }
 
     pub fn parse_character_escape(&mut self, unicode_mode: bool) -> PResult<Character>{

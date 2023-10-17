@@ -1,8 +1,8 @@
 
-use iron_gc::Array;
-use iron_gc::GcPtr;
+use alloc::boxed::Box;
 
 use crate::types::Any;
+use crate::types::HeapVariable;
 use crate::types::Object;
 
 #[no_mangle]
@@ -30,7 +30,7 @@ extern "C" fn __nativejs_print(value: Any){
 
 #[no_mangle]
 extern "C" fn __nativejs_throw(exception: Any) -> !{
-    unreachable!()
+    crate::unwinding::throw(exception);
 }
 
 #[no_mangle]
@@ -41,6 +41,11 @@ extern "C" fn __nativejs_enter_try(){
 #[no_mangle]
 extern "C" fn __nativejs_exit_try(){
 
+}
+
+#[no_mangle]
+unsafe extern "C" fn __nativejs_read_exception(exception: *mut u8) -> Any{
+    return crate::unwinding::read_exception(exception)
 }
 
 #[no_mangle]
@@ -56,58 +61,15 @@ unsafe extern "C" fn __nativejs_personality_routine(
 }
 
 #[no_mangle]
-extern "C" fn __nativejs_gc_alloc_any() -> iron_gc::GcPtr<Any>{
-    return iron_gc::GcPtr::new(Any::UNDEFINED)
+extern "C" fn __nativejs_gc_alloc_heap_variable() -> HeapVariable{
+    return HeapVariable::new(Any::UNDEFINED)
 }
 
 #[no_mangle]
-extern "C" fn __nativejs_gc_write_any(mut ptr: iron_gc::GcPtr<Any>, value: Any){
-    *ptr.as_mut() = value;
-}
+unsafe extern "C" fn __nativejs_call_async_func(func: *const (), this: Any, captures: *mut HeapVariable, capture_len: u32, var_len: u32, heap_var_len: u32) -> Any{
+    let captures = Box::from_raw(core::slice::from_raw_parts_mut(captures, capture_len as usize));
 
-#[no_mangle]
-extern "C" fn __nativejs_gc_read_any(ptr: iron_gc::GcPtr<Any>) -> Any{
-    return ptr.copied()
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_to_ptr_any(ptr: iron_gc::GcPtr<Any>) -> *mut Any{
-    return ptr.as_mut_ptr()
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_alloc_array_any(len: usize) -> GcPtr<Array<Any>>{
-    return GcPtr::new_array_copied(Any::UNDEFINED, len)
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_read_array_any(array: GcPtr<Array<Any>>, idx: usize) -> Any{
-    return array.as_ref().get(idx).map(|a|*a).unwrap_or(Any::UNDEFINED)
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_write_array_any(mut array: GcPtr<Array<Any>>, idx: usize, value: Any){
-    if let Some(ptr) = array.get_mut(idx){
-        *ptr = value;
-    }
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_alloc_capture_stack(len: usize) -> GcPtr<Array<GcPtr<Any>>>{
-    let ptr = GcPtr::new(Any::UNDEFINED);
-    let ptr = GcPtr::new_array_copied(ptr, len);
-
-    return ptr
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_gc_read_capture_stack_elem_ptr(ptr: GcPtr<Array<GcPtr<Any>>>, idx: usize) -> *mut Any{
-    return ptr.as_ref().get(idx).unwrap().as_mut_ptr()
-}
-
-#[no_mangle]
-extern "C" fn __nativejs_call_async_func(func: *const (), data: GcPtr<Array<Any>>, this: Any, captures: GcPtr<Array<GcPtr<Any>>>) -> Any{
-    let promise = crate::asynchronous::spawn(func, data);
+    let promise = crate::asynchronous::spawn(func, this, var_len, captures);
 
     return Object::new_promise(promise).into()
 }
@@ -150,7 +112,7 @@ unsafe extern "C" fn __nativejs_create_regex(src: *const libc::c_char, flags: *c
             return Object::new_regex(reg).into()
         }
         Err(e) => {
-            __nativejs_throw(Any::error(&e.text))
+            __nativejs_throw(Any::error(e.as_str()))
         }
     }
 }

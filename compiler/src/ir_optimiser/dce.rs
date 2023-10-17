@@ -177,21 +177,12 @@ impl IR {
             Self::Break { label: _ } => false,
             Self::BreakIfFalse => true,
             Self::BreakIfIterDone(_) => false,
-            Self::Call {
-                this: _,
-                arg_len: _,
-                args: _,
-                maybe_static: _,
-            } => true,
-            Self::CallStatic {
-                func_id: _,
-                arg_len: _,
-                args: _,
-            } => false,
-            Self::CallVarArgs { 
-                this:_,
-                args_array: _
-            } => true,
+            Self::Call { .. } => true,
+            Self::CallStatic { .. } => false,
+            Self::CallVarArgs { .. } => true,
+            Self::ObjectCall { .. } => true,
+            Self::ObjectCallVarArgs { .. } => true,
+            Self::ObjectAssign => true,
             Self::Continue { label: _ } => false,
             Self::CreateArgList(_) => false,
             Self::CreateAsyncIter(_) => true,
@@ -295,17 +286,19 @@ impl IR {
             Self::BreakIfFalse => false,
             Self::BreakIfIterDone(_) => false,
             Self::Call {
-                this: _,
                 arg_len: _,
                 args: _,
                 maybe_static: _,
             } => true,
-            Self::CallVarArgs { this, args_array } => true,
+            Self::CallVarArgs { args_array } => true,
             Self::CallStatic {
                 func_id: _,
                 arg_len: _,
                 args: _,
             } => true,
+            Self::ObjectCall { .. } => true,
+            Self::ObjectCallVarArgs { .. } => true,
+            Self::ObjectAssign => false,
             Self::Continue { label: _ } => false,
             Self::CreateArgList(_) => false,
             Self::CreateAsyncIter(_) => false,
@@ -405,10 +398,9 @@ impl IR {
 
     pub fn is_call(&self) -> bool {
         match self {
-            IR::Call { .. } | 
-            IR::CallStatic { .. } | 
-            IR::CallVarArgs { .. } |
-            IR::New { .. } => true,
+            IR::Call { .. } | IR::CallStatic { .. } | IR::CallVarArgs { .. } | IR::New { .. } => {
+                true
+            }
             _ => false,
         }
     }

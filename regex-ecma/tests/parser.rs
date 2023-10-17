@@ -1,15 +1,17 @@
-use regex_ecma::parser::parse;
+use regex_ecma::pest_parser::parse;
 
 #[test]
 pub fn test_char_range() {
-    let c = "&[z-a]$".chars().collect::<Vec<char>>();
+    let c = "&[z-a]$";
 
-    assert!(parse(&c, false).is_err());
+    let e = parse(c, false);
+    println!("{:#?}", e);
+    assert!(e.is_err());
 }
 
 #[test]
 pub fn test_quantifier_range(){
-    let c = "0{2,1}".chars().collect::<Vec<char>>();
+    let c = "0{2,1}";
 
     assert!(parse(&c, false).is_err());
 }
@@ -37,8 +39,7 @@ pub fn test_quantifier_errors(){
     ];
 
     for s in TESTS{
-        let c = s.chars().collect::<Vec<char>>();
-        let re = parse(&c, false);
+        let re = parse(s, false);
 
         assert!(re.is_err());
     }

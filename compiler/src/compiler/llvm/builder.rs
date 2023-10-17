@@ -2,7 +2,7 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::ContextRef;
 use inkwell::module::Module;
-use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue, PointerValue};
 
 use swc_atoms::JsWord;
 
@@ -37,8 +37,9 @@ pub trait FunctionBuilder<'ctx> {
     fn pop_break_block(&mut self);
     fn get_break_block(&mut self, label: Option<&JsWord>) -> BasicBlock<'ctx>;
 
-    fn create_iterator(&mut self, id: IterId, ptr: PointerValue<'ctx>);
-    fn destroy_iterator(&mut self, id: IterId);
+    /// creates a Box<Iterator>
+    fn create_iterator(&mut self, id: IterId, iter: PointerValue<'ctx>);
+    /// returns a Box<Iterator>
     fn get_iterator(&self, id: IterId) -> PointerValue<'ctx>;
 
     fn create_temp(&mut self, id: TempId);
@@ -57,6 +58,43 @@ pub trait FunctionBuilder<'ctx> {
     fn drop_variable(&mut self, id: VariableId);
     fn get_variable_ptr(&self, id: VariableId) -> PointerValue<'ctx>;
 
+    fn create_capture_stack(&self, variables: &[VariableId]) -> PointerValue<'ctx> {
+        let ty = self
+            .context()
+            .f64_type()
+            .ptr_type(Default::default())
+            .array_type(variables.len() as u32);
+
+        let stack = self.builder().build_alloca(ty, "capture_stack");
+
+        let i32_ty = self.context().i32_type();
+        let zero = i32_ty.const_zero();
+
+        let mut i = 0;
+        for v in variables {
+            let ptr = self.get_variable_ptr(*v);
+
+            let index = i32_ty.const_int(i, false);
+
+            let iptr = self.builder().build_gep(ty, stack, &[zero, index], "gep");
+
+            self.builder().build_store(iptr, ptr);
+            i += 1;
+        }
+
+        let stack_ty = self
+            .context()
+            .f64_type()
+            .ptr_type(Default::default())
+            .ptr_type(Default::default());
+
+        let stack = self
+            .builder()
+            .build_pointer_cast(stack, stack_ty, "ptr_cast");
+
+        return stack;
+    }
+
     fn throw(&self, value: FloatValue<'ctx>);
     fn call(
         &self,
@@ -66,5 +104,5 @@ pub trait FunctionBuilder<'ctx> {
     fn await_(&self, value: FloatValue<'ctx>) -> FloatValue<'ctx>;
     fn yield_(&self, value: FloatValue<'ctx>) -> FloatValue<'ctx>;
 
-    fn finish(&mut self);
+    fn finish(&mut self) -> FunctionValue<'ctx>;
 }

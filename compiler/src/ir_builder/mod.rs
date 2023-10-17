@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::Hash;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use swc_common::Span;
 use swc_common::Spanned;
@@ -22,7 +24,6 @@ use self::context::Variable;
 use self::ir::ArgListId;
 use self::ir::IterId;
 use self::ir::TempId;
-use self::ir::VarArgId;
 use self::ir::IR;
 
 mod assignment;
@@ -57,18 +58,23 @@ pub struct IRPackage {
     pub ir: Vec<IR>,
 }
 
+static GLOBAL_VARIABLE_ID: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct VariableId(uuid::Uuid);
+pub struct VariableId(u64);
 
 impl VariableId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4())
+        Self(GLOBAL_VARIABLE_ID.fetch_add(1, Ordering::SeqCst))
     }
 }
 
 impl Display for VariableId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("VariableId({})", self.0))
+        f.write_str("VariableID(")?;
+        let mut buf = native_js_common::itoa::Buffer::new();
+        f.write_str(buf.format(self.0))?;
+        f.write_str(")")
     }
 }
 
@@ -885,9 +891,7 @@ impl IRBuilder {
         match expr {
             Expr::Array(a) => {
                 let array_id = TempId::new();
-                container.push(IR::CreateArray {
-                    size: a.elems.len(),
-                });
+                container.push(IR::CreateObject);
                 container.push(IR::StoreTemp(array_id));
 
                 for elem in &a.elems {
@@ -902,15 +906,15 @@ impl IRBuilder {
                             container.push(IR::BreakIfIterDone(iterid));
 
                             container.push(IR::IterNext(iterid));
-                            container.push(IR::ArrayPush { array: array_id });
+                            container.push(IR::ObjectPush { array: array_id });
 
                             container.push(IR::EndLoop);
                         } else {
-                            container.push(IR::ArrayPush { array: array_id });
+                            container.push(IR::ObjectPush { array: array_id });
                         }
                     } else {
                         container.push(IR::LoadUndefined);
-                        container.push(IR::ArrayPush { array: array_id });
+                        container.push(IR::ObjectPush { array: array_id });
                     }
                 }
 
@@ -1137,18 +1141,21 @@ impl IRBuilder {
                     container.push(IR::EndIf);
                 }
                 OptChainBase::Call(c) => {
+                    let callee = TempId::new();
                     self.translate_expr(container, &c.callee)?;
 
+                    container.push(IR::StoreTemp(callee));
                     container.push(IR::If);
 
                     let mut arg_len = 0;
                     let is_var_arg = c.args.iter().any(|a| a.spread.is_some());
 
                     let args_list = ArgListId::new();
-                    let var_arg_id = VarArgId::new();
+                    let var_arg_id = TempId::new();
 
                     if is_var_arg {
-                        container.push(IR::CreateVarArgList(var_arg_id));
+                        container.push(IR::CreateObject);
+                        container.push(IR::StoreTemp(var_arg_id))
                     } else {
                         container.push(IR::CreateArgList(args_list));
                     }
@@ -1157,7 +1164,7 @@ impl IRBuilder {
                         self.translate_expr(container, &arg.expr)?;
 
                         if arg.spread.is_some() {
-                            container.push(IR::PushVarArg(var_arg_id))
+                            container.push(IR::ObjectPush { array: var_arg_id })
                         } else {
                             container.push(IR::PushArg(args_list));
                         }
@@ -1165,9 +1172,11 @@ impl IRBuilder {
                         arg_len += 1;
                     }
 
+                    container.push(IR::LoadTemp(callee));
+
                     if is_var_arg {
                         container.push(IR::CallVarArgs {
-                            var_arg: var_arg_id,
+                            args_array: var_arg_id,
                         })
                     } else {
                         container.push(IR::Call {
@@ -1175,6 +1184,10 @@ impl IRBuilder {
                             args: args_list,
                             maybe_static: None,
                         })
+                    }
+
+                    if is_var_arg {
+                        container.push(IR::DropTemp(callee));
                     }
 
                     container.push(IR::EndIf);
@@ -1218,9 +1231,7 @@ impl IRBuilder {
 
                 container.push(IR::CreateArgList(args_list));
 
-                container.push(IR::CreateArray {
-                    size: t.tpl.quasis.len(),
-                });
+                container.push(IR::CreateObject);
                 let array_id = TempId::new();
                 container.push(IR::StoreTemp(array_id));
 
@@ -1231,7 +1242,7 @@ impl IRBuilder {
                         container.push(IR::LoadString(JsWord::from(i.raw.as_ref())))
                     }
 
-                    container.push(IR::ArrayPush { array: array_id });
+                    container.push(IR::ObjectPush { array: array_id });
                 }
 
                 container.push(IR::LoadTemp(array_id));
@@ -1320,13 +1331,17 @@ impl IRBuilder {
                     Expr::Ident(i) => {
                         self.assign_acc_to_variable(container, &i.sym, None, i.span)?;
                     }
-                    Expr::Member(_m) => {
-                        container.push(IR::ObjAssign);
+                    Expr::Member(m) => {
+                        container.push(IR::ObjectAssign);
                     }
-                    Expr::OptChain(_c) => {
-                        container.push(IR::ObjAssign);
+                    Expr::OptChain(c) => {
+                        if let Some(m) = c.base.as_member() {
+                            container.push(IR::ObjectAssign);
+                        } else {
+                            return Err(Error::new(u.span, "Cannot update a non vraiable.", ""));
+                        }
                     }
-                    _ => unimplemented!(),
+                    _ => return Err(Error::new(u.span, "Cannot update a non vraiable.", "")),
                 }
 
                 if !u.prefix {

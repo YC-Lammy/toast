@@ -34,7 +34,6 @@ anyhow = "*"
 indicatif = "*"
 lazy_static = "*"
 # reqwest = "*"
-cityhasher = {version = "*", default-features = false}
 
 unicode-id-start = "*"
 peg = "0.8"
@@ -42,6 +41,8 @@ peg = "0.8"
 parking_lot = "*"
 # tokio = {version="1.28", features=["full"]}
 # async-recursion = "1"
+
+native-js-common = { path = "../native-js-common"}
 
 [profile.release]
 opt-level = 3

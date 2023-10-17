@@ -11,3 +11,8 @@ cranelift = "^0.100"
 cranelift-native = "^0.100"
 cranelift-jit = "^0.100"
 cranelift-module = "^0.100"
+
+pest_derive = "^2.7"
+pest = "^2.7"
+
+itoa = "^1.0"

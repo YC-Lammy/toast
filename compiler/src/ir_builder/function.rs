@@ -1,6 +1,6 @@
 use swc_common::BytePos;
 
-use super::{context::Context, ir::VarArgId, *};
+use super::{context::Context, *};
 
 impl IRBuilder {
     pub fn translate_function(
@@ -188,7 +188,7 @@ impl IRBuilder {
         call: &CallExpr,
     ) -> Result<(), Error> {
         let mut arg_len = 0;
-        let mut is_dynamic_call = false;
+        let mut is_vararg_call = false;
         let mut is_member_call = false;
         let mut is_static_call = None;
         let mut maybe_static_call = None;
@@ -196,16 +196,17 @@ impl IRBuilder {
         // check if any variable length arguments
         for arg in &call.args {
             if arg.spread.is_some() {
-                is_dynamic_call = true;
+                is_vararg_call = true;
             }
             arg_len += 1;
         }
 
         let args_list = ArgListId::new();
-        let var_arg_id = VarArgId::new();
+        let var_arg_id = TempId::new();
 
-        if is_dynamic_call {
-            container.push(IR::CreateVarArgList(var_arg_id));
+        if is_vararg_call {
+            container.push(IR::CreateObject);
+            container.push(IR::StoreTemp(var_arg_id));
         } else {
             container.push(IR::CreateArgList(args_list));
         }
@@ -222,12 +223,12 @@ impl IRBuilder {
                 container.push(IR::BreakIfIterDone(iterid));
 
                 container.push(IR::IterNext(iterid));
-                container.push(IR::PushVarArg(var_arg_id));
+                container.push(IR::ObjectPush { array: var_arg_id });
 
                 container.push(IR::EndLoop);
                 container.push(IR::DropIterator(iterid));
-            } else if is_dynamic_call {
-                container.push(IR::PushVarArg(var_arg_id));
+            } else if is_vararg_call {
+                container.push(IR::ObjectPush { array: var_arg_id });
             } else {
                 container.push(IR::PushArg(args_list));
             }
@@ -342,10 +343,9 @@ impl IRBuilder {
         };
 
         if let Some(funcid) = is_static_call {
-            if is_dynamic_call {
-                container.push(IR::CallStaticVarArgs {
-                    func_id: funcid,
-                    var_arg: var_arg_id,
+            if is_vararg_call {
+                container.push(IR::CallVarArgs {
+                    args_array: var_arg_id,
                 });
             } else {
                 container.push(IR::CallStatic {
@@ -355,20 +355,18 @@ impl IRBuilder {
                 });
             }
         } else if is_member_call {
-            if is_dynamic_call {
-                container.push(IR::ObjCallVarArg {
-                    var_arg: var_arg_id,
-                })
+            if is_vararg_call {
+                container.push(IR::ObjectCallVarArgs { args: var_arg_id })
             } else {
-                container.push(IR::ObjCall {
+                container.push(IR::ObjectCall {
                     args: args_list,
                     arg_len,
                 })
             }
         } else {
-            if is_dynamic_call {
+            if is_vararg_call {
                 container.push(IR::CallVarArgs {
-                    var_arg: var_arg_id,
+                    args_array: var_arg_id,
                 });
             } else {
                 container.push(IR::Call {
@@ -379,6 +377,9 @@ impl IRBuilder {
             }
         }
 
+        if is_vararg_call {
+            container.push(IR::DropTemp(var_arg_id));
+        }
         return Ok(());
     }
 }

@@ -77,7 +77,7 @@ impl IRBuilder {
 
                                 // create an empty array
                                 let array_id = TempId::new();
-                                container.push(IR::CreateArray { size: 0 });
+                                container.push(IR::CreateObject);
                                 container.push(IR::StoreTemp(array_id));
 
                                 // loop until iterator is done
@@ -87,7 +87,7 @@ impl IRBuilder {
                                 // read next item
                                 container.push(IR::IterNext(iterid));
                                 // push to array
-                                container.push(IR::ArrayPush { array: array_id });
+                                container.push(IR::ObjectPush { array: array_id });
 
                                 // end of loop
                                 container.push(IR::EndLoop);
@@ -410,10 +410,10 @@ impl IRBuilder {
                     match e.as_ref() {
                         Expr::Member(_m) => {
                             // assign to the previous field directly
-                            container.push(IR::ObjAssign);
+                            container.push(IR::ObjectAssign);
                         }
                         Expr::OptChain(_c) => {
-                            container.push(IR::ObjAssign);
+                            container.push(IR::ObjectAssign);
                         }
                         Expr::Ident(id) => {
                             self.assign_acc_to_variable(container, &id.sym, None, id.span)?;

@@ -110,14 +110,6 @@ impl Any {
         (self.0 & Self::TAG_BITS) == Self::BOOL_TAG
     }
 
-    pub fn is_false(&self) -> bool {
-        self.0 == Self::FALSE.0
-    }
-
-    pub fn is_true(&self) -> bool {
-        self.0 == Self::TRUE.0
-    }
-
     pub fn is_null(&self) -> bool {
         self.0 == Self::OBJECT_TAG
     }
@@ -168,7 +160,7 @@ impl Any {
     }
 
     pub fn as_object(&self) -> Option<&'static mut Object> {
-        if self.is_object() {
+        if self.is_object() && !self.is_null(){
             return Some(unsafe { (self.data() as *mut Object).as_mut().unwrap() });
         }
         return None;
@@ -181,17 +173,17 @@ impl Any {
         return None;
     }
 
-    pub fn to_string(&self) -> JSString {
+    pub fn to_string(self) -> JSString {
         // undefined
         if self.is_undefined() {
             return JSString::new("undefined");
         }
 
         // boolean
-        if self.is_false() {
+        if self == Self::FALSE {
             return JSString::new("false");
         }
-        if self.is_true() {
+        if self == Self::TRUE {
             return JSString::new("true");
         }
 
@@ -234,6 +226,39 @@ impl Any {
         unreachable!()
     }
 
+    pub fn to_bool(self) -> bool{
+        if self == Self::TRUE{
+            return true
+        }
+
+        if self == Self::FALSE{
+            return false
+        }
+
+        if self.is_symbol(){
+            return true
+        }
+
+        if let Some(i) = self.as_number(){
+            return i != 0.0
+        }
+
+        if let Some(obj) = self.as_object(){
+            return true
+        }
+
+        if let Some(s) = self.as_string(){
+            return s.len() != 0
+        }
+
+        if let Some(b) = self.as_bigint(){
+            return b.value() != 0
+        }
+
+        return false;
+    }
+    
+
     pub fn error(msg:&str) -> Any{
         todo!()
     }
@@ -241,7 +266,7 @@ impl Any {
 
 impl Any{
     pub fn get_property(self, key:JSString) -> Option<Any>{
-        if let Some(obj) = &self.as_object(){
+        if let Some(obj) = self.as_object(){
             return obj.get_property(key)
         }
         todo!()
@@ -266,9 +291,15 @@ impl iron_gc::Trace for Any{
             visitor.visit(big.0)
         }
 
-        if let Some(s) = self.as_string(){
-            visitor.visit(s.0)
+        if let Some(mut s) = self.as_string(){
+            s.trace(visitor);
         }
+    }
+}
+
+impl PartialEq for Any{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 

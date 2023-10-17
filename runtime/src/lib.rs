@@ -20,7 +20,6 @@ mod coro;
 mod ecma;
 //mod rt;
 mod types;
-mod utils;
 mod coroutine;
 mod allocator;
 mod runtime;

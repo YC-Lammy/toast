@@ -2,8 +2,6 @@ use core::marker::PhantomData;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
-use hashbrown::HashMap;
-
 
 static mut CURRENT_CORO: usize = 0;
 

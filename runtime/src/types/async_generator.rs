@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use iron_gc::GcPtr;
 use iron_gc::Array;
 
-use super::{TSFuncPtr, Any};
+use super::Any;
 
 
 
@@ -14,7 +14,7 @@ pub struct AsyncGenerator{
 }
 
 impl AsyncGenerator{
-    pub fn register(func:TSFuncPtr, captures:Option<GcPtr<Array<Any>>>, this:Any, args:&[Any]){
+    pub fn register(func:*const (), captures:Option<GcPtr<Array<Any>>>, this:Any, args:&[Any]){
 
     }
 

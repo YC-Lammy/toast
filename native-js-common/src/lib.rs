@@ -1,14 +1,11 @@
 #![no_std]
 
-extern crate alloc;
+pub mod fxhash;
 
-use core::hash::Hash;
-use core::hash::Hasher;
+extern crate alloc;
 
 pub use dtoa as ftoa;
 pub use itoa;
-
-pub use ahash;
 
 /// a zero allocation function for hashing a usize as string
 #[inline]
@@ -31,8 +28,5 @@ pub fn hash_float(value: f64) -> u64{
 /// a fast hasing method for hashing string
 #[inline]
 pub fn hash_string(s: &str) -> u64{
-    let mut hasher = ahash::AHasher::default();
-    s.hash(&mut hasher);
-
-    return hasher.finish();
+    return fxhash::hash64(&s);
 }

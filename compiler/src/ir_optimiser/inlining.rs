@@ -162,10 +162,10 @@ fn iniline_static_functions_ir(pkg: &IRPackage, mut irs: Vec<IR>, is_async: bool
                 }
                 IR::ReadRemainParams { starting_from } => {
                     if starting_from >= arg_temps.len() {
-                        inline_irs[i] = IR::CreateArray { size: 0 };
+                        inline_irs[i] = IR::CreateObject;
                     } else {
                         insert_remain_params.push((i, starting_from));
-                        inline_irs[i] = IR::CreateArray { size: 0 };
+                        inline_irs[i] = IR::CreateObject;
                     }
                 }
 
@@ -190,7 +190,7 @@ fn iniline_static_functions_ir(pkg: &IRPackage, mut irs: Vec<IR>, is_async: bool
                 inline_irs.insert(loc + 1 + inline_offset, IR::LoadTemp(temp));
                 inline_irs.insert(
                     loc + 1 + inline_offset + 1,
-                    IR::ArrayPush { array: array_temp },
+                    IR::ObjectPush { array: array_temp },
                 );
 
                 inline_offset += 2;

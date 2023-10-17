@@ -519,12 +519,7 @@ impl<'a> FunctionTranslater<'a>{
     }
 
     fn translate_atom_quantifier(&mut self, atom: &Atom, quantifier: &Quantifier) -> Value{
-        match quantifier{
-            Quantifier::Repeat { n, greedy } => {
-
-            },
-            _ => todo!()
-        }
+        
         todo!()
     }
 

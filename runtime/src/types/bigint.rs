@@ -22,6 +22,9 @@ impl JSValue for Bigint{
 }
 
 impl Bigint {
+    pub fn value(&self) -> i128{
+        self.0.copied()
+    }
     pub fn as_gc_ptr(&self) -> GcPtr<i128>{
         self.0
     }
