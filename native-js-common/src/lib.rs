@@ -1,11 +1,15 @@
 #![no_std]
 
 pub mod fxhash;
+pub mod error;
+pub mod ident;
+pub mod source;
 
 extern crate alloc;
 
 pub use dtoa as ftoa;
 pub use itoa;
+pub use parking_lot::*;
 
 /// a zero allocation function for hashing a usize as string
 #[inline]

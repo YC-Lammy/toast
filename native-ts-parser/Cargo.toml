@@ -1,0 +1,15 @@
+[package]
+name = "native-ts-parser"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+swc_ecmascript = {version="0.231", features=["parser", "dep_graph", "transforms", "optimization", "visit", "codegen", "typescript"]}
+swc_common = "0.31.22"
+swc_atoms = "*"
+
+ureq = "2.8"
+
+log = "0.4"
