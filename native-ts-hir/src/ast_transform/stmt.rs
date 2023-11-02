@@ -340,7 +340,7 @@ impl Translater {
 
         // a temporary variable
         let iterator_id = VarId::new();
-        let iterator_next_ty = Type::Unknown(UnknownId::new());
+        let iterator_next_ty = Type::unknown(span);
         let iterator_ty = Type::Iterator(Box::new(iterator_next_ty));
 
         // store the iterator in a temporary variable
@@ -492,7 +492,7 @@ impl Translater {
             self.translate_ty(&ann.type_ann)?
         } else {
             // unknown if not provided
-            Type::Unknown(UnknownId::new())
+            Type::unknown(id.span)
         };
 
         // translate the variable declare
@@ -942,7 +942,7 @@ impl Translater {
                 let ty = if let Some(ann) = &id.type_ann {
                     self.translate_ty(&ann.type_ann)?
                 } else {
-                    Type::Unknown(UnknownId::new())
+                    Type::unknown(id.span)
                 };
 
                 self.translate_var_binding_declare(id.span, kind, &id.id.sym, ty, Some(init))?;

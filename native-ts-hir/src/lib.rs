@@ -5,6 +5,7 @@ mod context;
 pub mod type_checker;
 pub mod type_resolver;
 
+mod passes;
 mod ast_transform;
 
 use std::sync::atomic::{AtomicUsize, Ordering};

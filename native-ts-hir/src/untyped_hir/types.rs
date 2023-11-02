@@ -6,6 +6,8 @@ use std::{
     },
 };
 
+use swc_common::Span;
+
 use super::{AliasType, ClassType, EnumType, InterfaceType, FunctionType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,6 +48,12 @@ pub enum Type {
         type_args: Box<[Type]>,
         func: Rc<FunctionType>,
     },
+    Called{
+        span: Span,
+        is_optchain: bool,
+        type_args: Box<[Type]>,
+        func: Box<Type>
+    },
     /// a union type
     Union(Vec<Type>),
     /// an instance of class
@@ -77,7 +85,10 @@ pub enum Type {
 
     // ambeguous types, must be resolved before type check happens
     /// unknown, to be resolved
-    Unknown(UnknownId),
+    Unknown{
+        span: Span,
+        id: UnknownId,
+    },
 
     /// contextual types
 
@@ -94,6 +105,10 @@ pub enum Type {
 }
 
 impl Type {
+    pub fn unknown(span: Span) -> Self{
+        Self::Unknown { span: span, id: UnknownId::new() }
+    }
+
     pub fn optional(self) -> Self {
         match self {
             Self::Undefined => self,
@@ -146,10 +161,11 @@ impl Type {
                 return Self::Union(v);
             }
             Self::Generic(_)
+            | Self::Called { .. }
             | Self::Return
             | Self::Alias(_)
             | Self::TypedAlias { .. }
-            | Self::Unknown(_)
+            | Self::Unknown{..}
             | Self::Awaited(_) => Self::Awaited(Box::new(self)),
         }
     }
@@ -175,7 +191,6 @@ impl Type {
 impl Type {
     pub fn is_unknown(&self) -> bool {
         match self {
-            
             | Self::Any
             | Self::BigInt
             | Self::Bool
@@ -184,6 +199,7 @@ impl Type {
             | Self::Enum(_)
             | Self::Function(_)
             | Self::TypedFunction { .. }
+            | Self::Called{..}
             | Self::Generic(_)
             | Self::Int
             | Self::Interface(_)
@@ -214,7 +230,7 @@ impl Type {
                 }
                 false
             }
-            Self::Unknown(_) => true,
+            Self::Unknown{..} => true,
         }
     }
     pub fn always_true(&self) -> bool {
@@ -226,12 +242,13 @@ impl Type {
             | Self::BigInt
             | Self::Bool
             | Self::Generic(_)
+            | Self::Called{..}
             | Self::Int
             | Self::Null
             | Self::Number
             | Self::String
             | Self::Undefined
-            | Self::Unknown(_)
+            | Self::Unknown{..}
             | Self::Return => false,
             Self::Array(_)
             | Self::Class(_)
@@ -273,13 +290,14 @@ impl Type {
             | Self::Int
             | Self::Number
             | Self::String
-            | Self::Unknown(_)
+            | Self::Unknown{..}
             | Self::Return
             | Self::Array(_)
             | Self::Class(_)
             | Self::TypedClass { .. }
             | Self::Function(_)
             | Self::TypedFunction { .. }
+            | Self::Called{..}
             | Self::Enum(_)
             | Self::Interface(_)
             | Self::TypedInterface { .. }

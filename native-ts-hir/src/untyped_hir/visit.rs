@@ -6,6 +6,7 @@ use super::ClassType;
 use super::Expr;
 use super::Function;
 use super::MemberOrVar;
+use super::Stmt;
 use super::Type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,9 @@ pub enum BreakOrContinue{
 
 pub trait Visitor{
     type Error;
+    fn visit_stmt(&mut self, stmt: &mut Stmt) -> Result<BreakOrContinue, Self::Error>{
+        Ok(BreakOrContinue::Continue)
+    }
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<BreakOrContinue, Self::Error>{
         Ok(BreakOrContinue::Continue)
     }
@@ -37,10 +41,6 @@ pub trait Visit{
 
 impl Visit for Expr{
     fn visit<V:Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error>{
-        if visitor.visit_expr(self)? == BreakOrContinue::Break{
-            return Ok(())
-        }
-
         match self{
             Self::Array { span, values } => {
                 for v in values{
@@ -151,6 +151,9 @@ impl Visit for Expr{
                 value.visit(visitor)?;
             }
         };
+        
+        // call the visitor
+        visitor.visit_expr(self)?;
 
         return Ok(())
     }
@@ -158,10 +161,7 @@ impl Visit for Expr{
 
 impl Visit for Type{
     fn visit<V:Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error>{
-        if visitor.visit_type(self)? == BreakOrContinue::Break{
-            return Ok(())
-        }
-
+        
         match self{
             Self::Null
             | Self::Undefined
@@ -174,7 +174,7 @@ impl Visit for Type{
             | Self::Bool
             | Self::Any 
             | Self::Enum(_)
-            | Self::Unknown(_)
+            | Self::Unknown{..}
             | Self::This
             | Self::Super
             | Self::Return 
@@ -222,6 +222,9 @@ impl Visit for Type{
                 }
             }
         }
+        
+        // call the visitor
+        visitor.visit_type(self)?;
 
         return Ok(())
     }

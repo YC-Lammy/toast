@@ -202,7 +202,7 @@ impl Translater {
             swc::TsKeywordTypeKind::TsAnyKeyword => Type::Any,
             swc::TsKeywordTypeKind::TsBigIntKeyword => Type::BigInt,
             swc::TsKeywordTypeKind::TsBooleanKeyword => Type::Bool,
-            swc::TsKeywordTypeKind::TsIntrinsicKeyword => Type::Unknown(UnknownId::new()),
+            swc::TsKeywordTypeKind::TsIntrinsicKeyword => Type::unknown(t.span),
             swc::TsKeywordTypeKind::TsNeverKeyword => Type::Undefined,
             swc::TsKeywordTypeKind::TsNullKeyword => Type::Null,
             swc::TsKeywordTypeKind::TsNumberKeyword => Type::Number,
@@ -210,7 +210,7 @@ impl Translater {
             swc::TsKeywordTypeKind::TsStringKeyword => Type::String,
             swc::TsKeywordTypeKind::TsSymbolKeyword => Type::Symbol,
             swc::TsKeywordTypeKind::TsUndefinedKeyword => Type::Undefined,
-            swc::TsKeywordTypeKind::TsUnknownKeyword => Type::Unknown(UnknownId::new()),
+            swc::TsKeywordTypeKind::TsUnknownKeyword => Type::unknown(t.span),
             swc::TsKeywordTypeKind::TsVoidKeyword => Type::Undefined,
         }
     }

@@ -134,7 +134,7 @@ impl Translater {
                         self.translate_ty(&ann.type_ann)?
                     } else {
                         // unknown
-                        Type::Unknown(UnknownId::new())
+                        Type::unknown(id.span)
                     }
                 };
 
@@ -171,7 +171,7 @@ impl Translater {
                     }
                 } else {
                     // all elements must have the same type
-                    Type::Unknown(UnknownId::new())
+                    Type::unknown(a.span)
                 };
 
                 for e in &a.elems {
