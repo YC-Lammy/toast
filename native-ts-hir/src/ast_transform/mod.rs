@@ -1,9 +1,9 @@
+mod class;
 mod expr;
+mod function;
 mod module;
 mod stmt;
 mod types;
-mod function;
-mod class;
 
 use swc_common::Span;
 use swc_common::Spanned;
@@ -11,12 +11,10 @@ use swc_ecmascript::ast as swc;
 
 use native_js_common::error::Error;
 
-use crate::untyped_hir as uhir;
 use crate::VarKind;
 
 use crate::context::Context;
 use crate::untyped_hir::Type;
-use crate::untyped_hir::UnknownId;
 
 type Result<T> = core::result::Result<T, Error<Span>>;
 
@@ -25,6 +23,10 @@ pub struct Translater {
 }
 
 impl Translater {
+    pub fn new() -> Self{
+        Self { context: Context::new() }
+    }
+
     pub fn hoist<'a, I: Iterator<Item = &'a swc::Stmt> + Clone>(&mut self, stmts: I) -> Result<()> {
         // hoist types
         for stmt in stmts.clone() {
@@ -184,13 +186,12 @@ impl Translater {
                 self.hoist_pat(kind, &a.left, type_ann)?;
             }
 
-            _ => {
+            swc::Pat::Object(_o) => {
                 return Err(Error::syntax_error(
                     pat.span(),
                     "destructive assignment not supported",
                 ))
             }
-            swc::Pat::Object(o) => {}
             swc::Pat::Rest(r) => {
                 // todo: rest pattern
                 return Err(Error::syntax_error(
@@ -310,5 +311,32 @@ impl Translater {
             expr.span(),
             "computed property names not allowed",
         ));
+    }
+}
+
+
+#[test]
+fn translate(){
+    let s = include_str!("../test.ts");
+
+    let parser = native_ts_parser::Parser::new();
+
+    let program = parser.parse_str("main".to_string(), s.to_string()).expect("error parsing source");
+
+    for (_, module) in &program.modules{
+        let mut t = Translater::new();
+
+        let re = t.hoist(module.module.body.iter().filter_map(|i|i.as_stmt()));
+
+        for i in &module.module.body{
+            if let Some(s) = i.as_stmt(){
+                let re = t.translate_stmt(s, None);
+                println!("{:#?}", re);
+            }
+        }
+        
+        println!("{:#?}", t.context.end_function());
+
+        println!("{:#?}", re);
     }
 }

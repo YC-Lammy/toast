@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{PropName, VarId, VarKind, untyped_hir::Stmt};
+use crate::{untyped_hir::Stmt, PropName, VarId};
 
 /// in typed hir, all types are concrete types
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

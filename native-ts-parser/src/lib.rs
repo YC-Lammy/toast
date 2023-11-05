@@ -2,10 +2,13 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{PathBuf, Path};
 
+use swc_common::BytePos;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(usize);
 
+#[derive(Debug)]
 pub struct ParsedModule{
     /// the canonicalised name
     pub path: PathBuf,
@@ -13,6 +16,7 @@ pub struct ParsedModule{
     pub module: swc_ecmascript::ast::Module,
 }
 
+#[derive(Debug)]
 pub struct ParsedProgram{
     pub modules: HashMap<ModuleId, ParsedModule>,
 }
@@ -73,13 +77,21 @@ impl Parser{
         }
     }
 
+    pub fn parse_str(mut self, name:String, src: String) -> Result<ParsedProgram, String>{
+        let file = self.src.new_source_file(swc_common::FileName::Custom(name), src);
+
+        self.parse_file(PathBuf::new(), &file.src, file.start_pos, file.end_pos)?;
+
+        return Ok(ParsedProgram { modules: self.modules })
+    }
+
     pub fn parse(mut self, main: PathBuf) -> Result<ParsedProgram, String>{
         self.parse_module(main)?;
 
         return Ok(ParsedProgram { modules: self.modules })
     }
 
-    pub fn parse_module(&mut self, path: PathBuf) -> Result<ModuleId, String>{
+    fn parse_module(&mut self, path: PathBuf) -> Result<ModuleId, String>{
         // path must be canonicalised
         let path = match path.canonicalize(){
             Ok(p) => p,
@@ -98,10 +110,14 @@ impl Parser{
             }
         };
 
+        return self.parse_file(path, &file.src, file.start_pos, file.end_pos)
+    }
+
+    fn parse_file(&mut self, path: PathBuf, input: &str, start:BytePos, end:BytePos) -> Result<ModuleId, String>{
         let input = swc_common::input::StringInput::new(
-            &file.src, 
-            file.start_pos, 
-            file.end_pos
+            &input, 
+            start, 
+            end
         );
 
         let mut parser = swc_ecmascript::parser::Parser::new(

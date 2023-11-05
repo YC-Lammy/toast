@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::rc::Rc;
+use native_js_common::rc::Rc;
 
 use native_ts_parser::ModuleId;
 
@@ -39,14 +39,14 @@ impl Binding {
         }
         return None;
     }
-    pub fn as_function(&self) -> Option<&Rc<Function>>{
-        match self{
+    pub fn as_function(&self) -> Option<&Rc<Function>> {
+        match self {
             Self::Function(f) => Some(f),
-            _ => None
+            _ => None,
         }
     }
-    pub fn as_alias(&self) -> Option<&Rc<AliasType>>{
-        match self{
+    pub fn as_alias(&self) -> Option<&Rc<AliasType>> {
+        match self {
             Self::TypeAlias(a) => Some(a),
             _ => None,
         }
@@ -76,10 +76,12 @@ impl Context {
     }
 
     pub fn new_function(&mut self) {
-        self.functions.push(Default::default())
+        self.functions.push(Default::default());
+        self.new_scope();
     }
 
     pub fn end_function(&mut self) -> crate::untyped_hir::Function {
+        self.close_scope();
         self.functions.pop().unwrap()
     }
 

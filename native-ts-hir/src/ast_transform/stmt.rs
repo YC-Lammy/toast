@@ -3,13 +3,12 @@ use native_js_common::error::Error;
 use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
-use crate::{
-    context::Binding,
-    untyped_hir::{
-        self as uhir, ClassType, EnumType, InterfaceMethod, InterfaceType, Type, UnknownId,
-    },
-    VarId, VarKind,
+use crate::context::Binding;
+use crate::{VarId, VarKind,};
+use crate::untyped_hir::{
+    self as uhir, ClassType, EnumType, InterfaceMethod, InterfaceType, Type,
 };
+
 
 use super::{Result, Translater};
 
@@ -83,7 +82,16 @@ impl Translater {
             }
             swc::Stmt::DoWhile(d) => return self.translate_do_while(d, label),
             swc::Stmt::Empty(_) => {}
-            swc::Stmt::Expr(e) => {}
+            swc::Stmt::Expr(e) => {
+                let expr = self.translate_expr(&e.expr)?;
+                
+                self.context.function().stmts.push(
+                    uhir::Stmt::Expr { 
+                        span: e.span, 
+                        expr: expr 
+                    }
+                );
+            }
             swc::Stmt::For(f) => return self.translate_for_loop(f, label),
             swc::Stmt::ForIn(f) => return self.translate_for_in_loop(f, label),
             swc::Stmt::ForOf(f) => return self.translate_for_of_loop(f, label),
@@ -224,13 +232,15 @@ impl Translater {
             match init {
                 // expression is invalid unless it is an ident
                 swc::VarDeclOrExpr::Expr(e) => {
-                    if let Some(id) = e.as_ident() {
-                        // assignment
-                    }
-                    return Err(Error::syntax_error(
-                        e.span(),
-                        "initiator in for loop must have a declaration",
-                    ));
+                    let span = e.span();
+                    let expr = self.translate_expr(&e)?;
+
+                    self.context.function().stmts.push(
+                        uhir::Stmt::Expr { 
+                            span: span, 
+                            expr: expr
+                        }
+                    );
                 }
                 // declared with var, let or const
                 swc::VarDeclOrExpr::VarDecl(d) => {
@@ -341,7 +351,7 @@ impl Translater {
         // a temporary variable
         let iterator_id = VarId::new();
         let iterator_next_ty = Type::unknown(span);
-        let iterator_ty = Type::Iterator(Box::new(iterator_next_ty));
+        let iterator_ty = Type::Iterator(Box::new(iterator_next_ty.clone()));
 
         // store the iterator in a temporary variable
         self.context.function().stmts.push(uhir::Stmt::Declare {
@@ -384,7 +394,6 @@ impl Translater {
 
         // temporary variable for storing the next set of result
         let iterator_next_id = VarId::new();
-        let iterator_next_ty = iterator_next_ty;
 
         // store result of iterator.next() to a variable
         self.context.function().stmts.push(uhir::Stmt::Declare {
@@ -392,7 +401,7 @@ impl Translater {
             kind: VarKind::Const,
             name: "__builtin_iterator_next_".into(),
             id: iterator_next_id,
-            ty: iterator_next_ty,
+            ty: iterator_next_ty.clone(),
             init: Some(get_next),
         });
 
@@ -406,10 +415,11 @@ impl Translater {
                     span: span,
                     name: "__builtin_iterator_next_".into(),
                     id: iterator_next_id,
-                    ty: iterator_next_ty,
+                    ty: iterator_next_ty.clone(),
                 }),
                 // if result is done
                 prop: uhir::PropName::Ident("done".into()),
+                type_args: Vec::new(),
                 is_optchain: true,
             },
         });
@@ -428,14 +438,15 @@ impl Translater {
                 span: span,
                 name: "__builtin_iterator_next_".into(),
                 id: iterator_next_id,
-                ty: iterator_next_ty,
+                ty: iterator_next_ty.clone(),
             }),
             prop: uhir::PropName::Ident("value".into()),
+            type_args: Vec::new(),
             is_optchain: true,
         };
 
         // get the span, kind and binding from left hand side
-        let (span, kind, id) = match &f.left {
+        let (_span, kind, id) = match &f.left {
             // a var, let or const declare
             swc::ForHead::VarDecl(v) => {
                 // only one binding should be specified
@@ -493,6 +504,14 @@ impl Translater {
         } else {
             // unknown if not provided
             Type::unknown(id.span)
+        };
+
+        match kind{
+            VarKind::AwaitUsing => self.context.add_await_using(&id.id.sym, ty.clone()),
+            VarKind::Using => self.context.add_using(&id.id.sym, ty.clone()),
+            VarKind::Const => self.context.add_const(&id.id.sym, ty.clone()),
+            VarKind::Let => self.context.add_let(&id.sym, ty.clone()),
+            VarKind::Var => self.context.add_var(&id.id.sym, ty.clone()),
         };
 
         // translate the variable declare
@@ -564,7 +583,7 @@ impl Translater {
             swc::Decl::TsInterface(i) => {
                 self.translate_interface_decl(i)?;
             }
-            swc::Decl::TsModule(m) => {
+            swc::Decl::TsModule(_m) => {
                 todo!()
             }
             swc::Decl::TsTypeAlias(a) => {
@@ -713,7 +732,7 @@ impl Translater {
             };
 
             // getters not supported
-            if let Some(getter) = elem.as_mut_ts_getter_signature() {
+            if let Some(getter) = elem.as_ts_getter_signature() {
                 return Err(Error::syntax_error(
                     getter.span,
                     "getters not allowed, use properties instead",
@@ -721,7 +740,7 @@ impl Translater {
             }
 
             // setters not supported
-            if let Some(setter) = elem.as_mut_ts_setter_signature() {
+            if let Some(setter) = elem.as_ts_setter_signature() {
                 return Err(Error::syntax_error(
                     setter.span,
                     "setters not allowed, use properties instead",
@@ -729,7 +748,7 @@ impl Translater {
             }
 
             // a property
-            if let Some(prop) = elem.as_mut_ts_property_signature() {
+            if let Some(prop) = elem.as_ts_property_signature() {
                 // translate propname
                 let propname =
                 // propname not computed, can only be ident
@@ -767,7 +786,7 @@ impl Translater {
             };
 
             // a method
-            if let Some(method) = elem.as_mut_ts_method_signature() {
+            if let Some(method) = elem.as_ts_method_signature() {
                 // translate propname
                 let propname =
                 // propname not computed, can only be ident
@@ -800,7 +819,7 @@ impl Translater {
                     ty: fn_ty,
                 });
             }
-        };
+        }
 
         // close scope that is opened
         if iface.type_params.is_some() {
@@ -847,7 +866,7 @@ impl Translater {
         func.params = translated_function.params;
         func.stmts = translated_function.stmts;
         func.variables = translated_function.variables;
-        
+
         // copy function type over
         *func_ty = translated_function.ty.as_ref().clone();
 
@@ -855,7 +874,7 @@ impl Translater {
         func_ty.is_definite = true;
         func.is_definite = true;
 
-        return Ok(())
+        return Ok(());
     }
 
     pub fn translate_type_alias(&mut self, alias: &swc::TsTypeAliasDecl) -> Result<()> {
@@ -873,7 +892,7 @@ impl Translater {
                 .unwrap()
         };
 
-        if let Some(params) = &alias.type_params{
+        if let Some(params) = &alias.type_params {
             // open new scope for generics
             self.context.new_scope();
             alias_ty.generics = self.translate_generic_params(params)?;
@@ -882,13 +901,13 @@ impl Translater {
         alias_ty.base = self.translate_ty(&alias.type_ann)?;
 
         // close previously opened scope
-        if alias.type_params.is_some(){
+        if alias.type_params.is_some() {
             self.context.close_scope();
         };
 
         alias_ty.is_definite = true;
 
-        return Ok(())
+        return Ok(());
     }
 
     pub fn translate_var_decl(&mut self, v: &swc::VarDecl) -> Result<()> {
@@ -958,11 +977,11 @@ impl Translater {
         span: Span,
         kind: VarKind,
         name: &str,
-        ty: Type,
+        _ty: Type,
         initialiser: Option<uhir::Expr>,
     ) -> Result<()> {
         // should be hoisted
-        let binding = self.context.find(name).unwrap();
+        let binding = self.context.find(name).unwrap().clone();
 
         match binding {
             Binding::AwaitUsing { id, ty }
@@ -970,12 +989,13 @@ impl Translater {
             | Binding::Const { id, ty }
             | Binding::Let { id, ty }
             | Binding::Var { id, ty } => {
+
                 self.context.function().stmts.push(uhir::Stmt::Declare {
                     span: span,
                     kind: kind,
                     name: name.to_string(),
-                    id: *id,
-                    ty: *ty,
+                    id: id,
+                    ty: ty,
                     init: initialiser,
                 });
             }

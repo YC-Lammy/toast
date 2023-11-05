@@ -25,9 +25,15 @@ class Car extends Vechical implements Thing{
     }
 }
 
+class Plane<T extends Thing>{
+
+}
+
 interface Thing{
     
 }
+
+type I = RegExp;
 
 let human = new Human;
 var car = new Car;

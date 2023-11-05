@@ -1,13 +1,13 @@
-use std::rc::Rc;
+use native_js_common::rc::Rc;
 
 use native_js_common::error::Error;
 
-use swc_common::{Spanned, Span};
+use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
 use crate::{
     context::Binding,
-    untyped_hir::{FunctionType, GenericId, GenericParam, Type, UnknownId},
+    untyped_hir::{FunctionType, GenericId, GenericParam, Type},
 };
 
 use super::{Result, Translater};
@@ -36,6 +36,7 @@ impl Translater {
 
             generics.push(GenericParam {
                 name: p.name.sym.to_string(),
+                span: p.span,
                 id: gid,
                 constrain: constrain,
                 default: default,
@@ -50,15 +51,29 @@ impl Translater {
     }
 
     pub fn translate_type_expr(&mut self, expr: &swc::Expr, ty_args: Vec<Type>) -> Result<Type> {
-        match expr{
+        match expr {
             swc::Expr::Ident(id) => {
-                if let Some(binding) = self.context.find(&id.sym){
-                    return self.binding_with_type_args(id.span, binding, ty_args)
+                if let Some(binding) = self.context.find(&id.sym).cloned() {
+                    return self.binding_with_type_args(id.span, &binding, ty_args);
                 }
+            }
+            swc::Expr::TsInstantiation(i) => {
+                if !ty_args.is_empty() {
+                    todo!()
+                }
+
+                let mut ty_args = Vec::new();
+
+                for i in i.type_args.params.iter() {
+                    let t = self.translate_ty(i)?;
+                    ty_args.push(t);
+                }
+
+                return self.translate_type_expr(&i.expr, ty_args);
             }
             _ => {}
         }
-        return Err(Error::syntax_error(expr.span(), "invalid type expression"))
+        return Err(Error::syntax_error(expr.span(), "invalid type expression"));
     }
 
     pub fn translate_ty(&mut self, ty: &swc::TsType) -> Result<Type> {
@@ -78,13 +93,21 @@ impl Translater {
                     return Err(Error::syntax_error(c.span, "constructor type not allowed"))
                 }
                 swc::TsFnOrConstructorType::TsFnType(f) => {
-                    if f.type_params.is_some(){
-                        return Err(Error::syntax_error(f.span, "type params not allowed in function type definition"))
+                    if f.type_params.is_some() {
+                        return Err(Error::syntax_error(
+                            f.span,
+                            "type params not allowed in function type definition",
+                        ));
                     }
-                    Ok(Type::Function(
-                        self.translate_fn_ty(&f.params, f.type_params.as_deref(), Some(&f.type_ann))?,
-                    ))
-                },
+                    Ok(Type::Function {
+                        type_args: Box::new([]),
+                        func: self.translate_fn_ty(
+                            &f.params,
+                            f.type_params.as_deref(),
+                            Some(&f.type_ann),
+                        )?,
+                    })
+                }
             },
             swc::TsType::TsImportType(i) => {
                 return Err(Error::syntax_error(i.span, "import type not supported"))
@@ -113,7 +136,7 @@ impl Translater {
             swc::TsType::TsRestType(r) => {
                 return Err(Error::syntax_error(r.span, "rest type not allowed"))
             }
-            swc::TsType::TsThisType(t) => return Ok(Type::This),
+            swc::TsType::TsThisType(_) => return Ok(Type::This),
             swc::TsType::TsTupleType(t) => {
                 return Err(Error::syntax_error(t.span, "tuple types not supported"))
             }
@@ -131,11 +154,15 @@ impl Translater {
             }
             swc::TsType::TsTypeRef(r) => self.translate_type_ref(r),
             swc::TsType::TsUnionOrIntersectionType(u) => match u {
-                swc::TsUnionOrIntersectionType::TsIntersectionType(i) => {
+                swc::TsUnionOrIntersectionType::TsIntersectionType(_) => {
                     todo!()
                 }
                 swc::TsUnionOrIntersectionType::TsUnionType(u) => {
-                    todo!()
+                    let mut v = Vec::new();
+                    for t in &u.types{
+                        v.push(self.translate_ty(t)?);
+                    }
+                    return Ok(Type::Union(v))
                 }
             },
         }
@@ -189,6 +216,7 @@ impl Translater {
         };
 
         return Ok(Rc::new(FunctionType {
+            visit_fingerprint: 0,
             is_definite: true,
             this_ty: this_ty,
             generics: Vec::new(),
@@ -238,7 +266,7 @@ impl Translater {
             }
         }
         if let Some(binding) = self.find_entity_name(&tr.type_name) {
-            return self.binding_with_type_args(tr.span, &binding, type_args)
+            return self.binding_with_type_args(tr.span, &binding, type_args);
         }
 
         fn f(buf: &mut String, name: &swc::TsEntityName) {
@@ -263,78 +291,128 @@ impl Translater {
         ));
     }
 
-    fn binding_with_type_args(&mut self, sp: Span, binding:&Binding, ty_args: Vec<Type>) -> Result<Type>{
-        match binding{
+    fn binding_with_type_args(
+        &mut self,
+        sp: Span,
+        binding: &Binding,
+        ty_args: Vec<Type>,
+    ) -> Result<Type> {
+        match binding {
             Binding::Class(c) => {
                 let min_generics = c.minimum_generics();
-                if ty_args.len() < min_generics{
-                    return Err(Error::syntax_error(sp, format!("class '{}' expected {} type arguments, {} were given", c.name, min_generics, ty_args.len())));
+                if ty_args.len() < min_generics {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "class '{}' expected {} type arguments, {} were given",
+                            c.name,
+                            min_generics,
+                            ty_args.len()
+                        ),
+                    ));
                 }
 
-                if c.is_definite && ty_args.len() > c.generics.len(){
-                    return Err(Error::syntax_error(sp, format!("class '{}' expected {} type arguments, {} were given", c.name, c.generics.len(), ty_args.len())));
+                if c.is_definite && ty_args.len() > c.generics.len() {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "class '{}' expected {} type arguments, {} were given",
+                            c.name,
+                            c.generics.len(),
+                            ty_args.len()
+                        ),
+                    ));
                 };
 
-                if ty_args.is_empty(){
-                    return Ok(Type::Class(c.clone()))
-                }
-
-                return Ok(Type::TypedClass { 
-                    type_args: ty_args.into(), 
-                    class: c.clone()
-                })
+                return Ok(Type::Class {
+                    span: sp,
+                    type_args: ty_args.into(),
+                    class: c.clone(),
+                });
             }
             Binding::Enum(e) => {
-                if !ty_args.is_empty(){
-                    return Err(Error::syntax_error(sp, "Enum type expected 0 type arguments"))
+                if !ty_args.is_empty() {
+                    return Err(Error::syntax_error(
+                        sp,
+                        "Enum type expected 0 type arguments",
+                    ));
                 }
-                return Ok(Type::Enum(e.clone()))
-            },
+                return Ok(Type::Enum(e.clone()));
+            }
             Binding::Generic(g) => {
-                if !ty_args.is_empty(){
-                    return Err(Error::syntax_error(sp, "Generic type expected 0 type arguments"))
+                if !ty_args.is_empty() {
+                    return Err(Error::syntax_error(
+                        sp,
+                        "Generic type expected 0 type arguments",
+                    ));
                 }
-                return Ok(Type::Generic(*g))
+                return Ok(Type::Generic(*g));
             }
             Binding::Interface(i) => {
                 let min_generics = i.minimum_generics();
-                if ty_args.len() < min_generics{
-                    return Err(Error::syntax_error(sp, format!("interface '{}' expected {} type arguments, {} were given", i.name, min_generics, ty_args.len())))
+                if ty_args.len() < min_generics {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "interface '{}' expected {} type arguments, {} were given",
+                            i.name,
+                            min_generics,
+                            ty_args.len()
+                        ),
+                    ));
                 }
 
-                if i.is_definite && ty_args.len() > i.generics.len(){
-                    return Err(Error::syntax_error(sp, format!("interface '{}' expected {} type arguments, {} were given", i.name, i.generics.len(), ty_args.len())))
+                if i.is_definite && ty_args.len() > i.generics.len() {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "interface '{}' expected {} type arguments, {} were given",
+                            i.name,
+                            i.generics.len(),
+                            ty_args.len()
+                        ),
+                    ));
                 }
 
-                if ty_args.is_empty(){
-                    return Ok(Type::Interface(i.clone()))
-                }
-
-                return Ok(Type::TypedInterface { 
-                    type_args: ty_args.into(), 
-                    interface: i.clone()
-                })
+                return Ok(Type::Interface {
+                    span: sp,
+                    type_args: ty_args.into(),
+                    interface: i.clone(),
+                });
             }
             Binding::TypeAlias(a) => {
                 let min_generics = a.minimum_generics();
-                if ty_args.len() < min_generics{
-                    return Err(Error::syntax_error(sp, format!("alias '{}' expected {} type arguments, {} were given", a.name, min_generics, ty_args.len())))
+                if ty_args.len() < min_generics {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "alias '{}' expected {} type arguments, {} were given",
+                            a.name,
+                            min_generics,
+                            ty_args.len()
+                        ),
+                    ));
                 }
 
-                if a.is_definite && ty_args.len() > a.generics.len(){
-                    return Err(Error::syntax_error(sp, format!("alias '{}' expected {} type arguments, {} were given", a.name, a.generics.len(), ty_args.len())))
+                if a.is_definite && ty_args.len() > a.generics.len() {
+                    return Err(Error::syntax_error(
+                        sp,
+                        format!(
+                            "alias '{}' expected {} type arguments, {} were given",
+                            a.name,
+                            a.generics.len(),
+                            ty_args.len()
+                        ),
+                    ));
                 };
 
-                if ty_args.is_empty(){
-                    return Ok(Type::Alias(a.clone()))
-                };
-
-                return Ok(Type::TypedAlias { 
-                    type_args: ty_args.into(), 
-                    alias: a.clone()
-                })
+                return Ok(Type::Alias {
+                    span: sp,
+                    type_args: ty_args.into(),
+                    alias: a.clone(),
+                });
             }
-            _ => return Err(Error::syntax_error(sp, "binding is not a type"))
+            _ => return Err(Error::syntax_error(sp, "binding is not a type")),
         }
     }
 }

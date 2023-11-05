@@ -4,6 +4,8 @@ pub mod fxhash;
 pub mod error;
 pub mod ident;
 pub mod source;
+pub mod lazy;
+pub mod rc;
 
 extern crate alloc;
 

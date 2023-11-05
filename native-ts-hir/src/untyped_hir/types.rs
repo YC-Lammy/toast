@@ -1,14 +1,12 @@
-use std::{
-    rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use swc_common::Span;
 
-use super::{AliasType, ClassType, EnumType, InterfaceType, FunctionType};
+use native_js_common::rc::Rc;
+
+use crate::PropName;
+
+use super::{AliasType, ClassType, EnumType, FunctionType, InterfaceType, DeepClone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnknownId(usize);
@@ -21,7 +19,7 @@ impl UnknownId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GenericId(usize);
+pub struct GenericId(pub(crate) usize);
 
 impl GenericId {
     pub fn new() -> GenericId {
@@ -43,37 +41,31 @@ pub enum Type {
     Symbol,
     Bool,
     /// a function
-    Function(Rc<FunctionType>),
-    TypedFunction {
+    Function {
         type_args: Box<[Type]>,
         func: Rc<FunctionType>,
-    },
-    Called{
-        span: Span,
-        is_optchain: bool,
-        type_args: Box<[Type]>,
-        func: Box<Type>
     },
     /// a union type
     Union(Vec<Type>),
     /// an instance of class
-    Class(Rc<ClassType>),
-    TypedClass {
+    Class {
+        span: Span,
         type_args: Box<[Type]>,
         class: Rc<ClassType>,
     },
     Enum(Rc<EnumType>),
-    Interface(Rc<InterfaceType>),
-    TypedInterface {
+    Interface {
+        span: Span,
         type_args: Box<[Type]>,
         interface: Rc<InterfaceType>,
     },
 
     /// an alias type
-    Alias(Rc<AliasType>),
-    TypedAlias{
+    //Alias(Rc<AliasType>),
+    Alias {
+        span: Span,
         type_args: Box<[Type]>,
-        alias: Rc<AliasType>
+        alias: Rc<AliasType>,
     },
 
     /// int indexed dynamic type
@@ -85,7 +77,7 @@ pub enum Type {
 
     // ambeguous types, must be resolved before type check happens
     /// unknown, to be resolved
-    Unknown{
+    Unknown {
         span: Span,
         id: UnknownId,
     },
@@ -100,13 +92,15 @@ pub enum Type {
     Super,
     /// the retur type
     Return,
-    Awaited(Box<Type>),
     Iterator(Box<Type>),
 }
 
 impl Type {
-    pub fn unknown(span: Span) -> Self{
-        Self::Unknown { span: span, id: UnknownId::new() }
+    pub fn unknown(span: Span) -> Self {
+        Self::Unknown {
+            span: span,
+            id: UnknownId::new(),
+        }
     }
 
     pub fn optional(self) -> Self {
@@ -128,48 +122,6 @@ impl Type {
         }
     }
 
-    pub fn awaited(self) -> Self {
-        match self {
-            Self::Int
-            | Self::Any
-            | Self::Null
-            | Self::Number
-            | Self::BigInt
-            | Self::Bool
-            | Self::String
-            | Self::Regex
-            | Self::Undefined
-            | Self::Symbol
-            | Self::Function(_)
-            | Self::TypedFunction { .. }
-            | Self::Array(_)
-            | Self::Class(_)
-            | Self::TypedClass { .. }
-            | Self::Enum(_)
-            | Self::Interface(_)
-            | Self::TypedInterface { .. }
-            | Self::This
-            | Self::Super
-            | Self::Iterator(_)
-            | Self::Map(_) => self,
-            Self::Promise(p) => *p,
-            Self::Union(u) => {
-                let mut v = Vec::with_capacity(u.len());
-                for i in u {
-                    v.push(i.awaited())
-                }
-                return Self::Union(v);
-            }
-            Self::Generic(_)
-            | Self::Called { .. }
-            | Self::Return
-            | Self::Alias(_)
-            | Self::TypedAlias { .. }
-            | Self::Unknown{..}
-            | Self::Awaited(_) => Self::Awaited(Box::new(self)),
-        }
-    }
-
     pub fn union(self, other: Type) -> Self {
         if self == other {
             return self;
@@ -181,7 +133,7 @@ impl Type {
                 return Self::Union(u);
             }
             _ => {
-                let mut v = vec![self, other];
+                let v = vec![self, other];
                 return Self::Union(v);
             }
         }
@@ -191,19 +143,15 @@ impl Type {
 impl Type {
     pub fn is_unknown(&self) -> bool {
         match self {
-            | Self::Any
+            Self::Any
             | Self::BigInt
             | Self::Bool
-            | Self::Class(_)
-            | Self::TypedClass { .. }
+            | Self::Class { .. }
             | Self::Enum(_)
-            | Self::Function(_)
-            | Self::TypedFunction { .. }
-            | Self::Called{..}
+            | Self::Function { .. }
             | Self::Generic(_)
             | Self::Int
-            | Self::Interface(_)
-            | Self::TypedInterface { .. }
+            | Self::Interface { .. }
             | Self::Null
             | Self::Number
             | Self::Regex
@@ -214,13 +162,11 @@ impl Type {
             | Self::Undefined
             | Self::Return => false,
 
-            Self::Alias(alias)
-            | Self::TypedAlias { alias, .. } => alias.base.is_unknown(),
+            Self::Alias { alias, .. } => alias.base.is_unknown(),
 
             Self::Map(t)
             | Self::Array(t)
             | Self::Iterator(t)
-            | Self::Awaited(t)
             | Self::Promise(t) => t.is_unknown(),
             Self::Union(u) => {
                 for t in u {
@@ -230,34 +176,28 @@ impl Type {
                 }
                 false
             }
-            Self::Unknown{..} => true,
+            Self::Unknown { .. } => true,
         }
     }
     pub fn always_true(&self) -> bool {
         match self {
-            Self::Alias(_)
-            | Self::TypedAlias{..}
+            Self::Alias { .. }
             | Self::Any
-            | Self::Awaited(_)
             | Self::BigInt
             | Self::Bool
             | Self::Generic(_)
-            | Self::Called{..}
             | Self::Int
             | Self::Null
             | Self::Number
             | Self::String
             | Self::Undefined
-            | Self::Unknown{..}
+            | Self::Unknown { .. }
             | Self::Return => false,
             Self::Array(_)
-            | Self::Class(_)
-            | Self::TypedClass { .. }
-            | Self::Function(_)
-            | Self::TypedFunction { .. }
+            | Self::Class { .. }
+            | Self::Function { .. }
             | Self::Enum(_)
-            | Self::Interface(_)
-            | Self::TypedInterface { .. }
+            | Self::Interface { .. }
             | Self::Map(_)
             | Self::Promise(_)
             | Self::Regex
@@ -280,27 +220,21 @@ impl Type {
         match self {
             Self::Undefined | Self::Null => true,
 
-            Self::Alias(_)
-            | Self::TypedAlias{..}
+            Self::Alias { .. }
             | Self::Any
-            | Self::Awaited(_)
             | Self::BigInt
             | Self::Bool
             | Self::Generic(_)
             | Self::Int
             | Self::Number
             | Self::String
-            | Self::Unknown{..}
+            | Self::Unknown { .. }
             | Self::Return
             | Self::Array(_)
-            | Self::Class(_)
-            | Self::TypedClass { .. }
-            | Self::Function(_)
-            | Self::TypedFunction { .. }
-            | Self::Called{..}
+            | Self::Class { .. }
+            | Self::Function { .. }
             | Self::Enum(_)
-            | Self::Interface(_)
-            | Self::TypedInterface { .. }
+            | Self::Interface { .. }
             | Self::Map(_)
             | Self::Promise(_)
             | Self::Iterator(_)
@@ -320,3 +254,190 @@ impl Type {
     }
 }
 
+impl DeepClone for Type{
+    fn deep_clone(&self) -> Self{
+        match self{
+            Self::Alias { span, type_args, alias } => {
+                Self::Alias { 
+                    span: *span, 
+                    type_args: type_args.deep_clone(), 
+                    alias: Rc::new(alias.deep_clone()) 
+                }
+            }
+            Self::Array(elem) => Self::Array(elem.deep_clone().into()),
+            Self::Class { span, type_args, class } => {
+                Self::Class { span: *span, type_args: type_args.deep_clone(), class: Rc::new(class.deep_clone()) }
+            }
+            Self::Enum(e) => {
+                Self::Enum(e.clone())
+            }
+            Self::Function { type_args, func } => {
+                Self::Function { type_args: type_args.deep_clone(), func: Rc::new(func.deep_clone()) }
+            }
+            Self::Interface { span, type_args, interface } => {
+                Self::Interface { span: *span, type_args: type_args.deep_clone(), interface: Rc::new(interface.deep_clone()) }
+            }
+            Self::Iterator(t) => Self::Iterator(t.deep_clone().into()),
+            Self::Map(t) => Self::Map(t.deep_clone().into()),
+            Self::Promise(p) => Self::Promise(p.deep_clone().into()),
+            Self::Union(u) => Self::Union(u.deep_clone()),
+            ty => ty.clone()
+        }
+    }
+}
+
+
+impl core::fmt::Display for Type{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self{
+            Self::Alias { span, type_args, alias } => {
+                f.write_str(&alias.name)?;
+                if !type_args.is_empty(){
+                    f.write_str("<")?;
+
+                    for (i, t) in type_args.iter().enumerate(){
+                        t.fmt(f)?;
+
+                        if i == type_args.len() - 1{
+                            break;
+                        }
+
+                        f.write_str(",");
+                    }
+
+                    f.write_str(">")?;
+                }
+            }
+            Self::Any => f.write_str("any")?,
+            Self::Array(a) => {
+                a.as_ref().fmt(f)?;
+                f.write_str("[]")?;
+            }
+            Self::BigInt => {
+                f.write_str("bigint")?;
+            }
+            Self::Bool => {
+                f.write_str("boolean")?;
+            }
+            Self::Class { span, type_args, class } => {
+                f.write_str(&class.name)?;
+                if !type_args.is_empty(){
+                    f.write_str("<")?;
+
+                    for (i, t) in type_args.iter().enumerate(){
+                        t.fmt(f)?;
+
+                        if i == type_args.len() - 1{
+                            break;
+                        }
+
+                        f.write_str(",");
+                    }
+
+                    f.write_str(">")?;
+                }
+            }
+            Self::Enum(e) => {
+                f.write_str(&e.name)?;
+            } 
+            Self::Function { type_args, func } => {
+                f.write_str("(this:");
+                func.this_ty.fmt(f)?;
+
+                for p in &func.params{
+                    f.write_str(",")?;
+                    p.fmt(f)?;
+                }
+
+                f.write_str(")=>")?;
+
+                func.return_ty.fmt(f)?;
+            }
+            Self::Generic(g) => {
+                f.write_str("unknown")?;
+            }
+            Self::Int => {
+                f.write_str("number")?;
+            }
+            Self::Interface { span, type_args, interface } => {
+                f.write_str(&interface.name)?;
+                if !type_args.is_empty(){
+                    f.write_str("<")?;
+
+                    for (i, t) in type_args.iter().enumerate(){
+                        t.fmt(f)?;
+
+                        if i == type_args.len() - 1{
+                            break;
+                        }
+
+                        f.write_str(",");
+                    }
+
+                    f.write_str(">")?;
+                }
+            }
+            Self::Iterator(t) => {
+                f.write_str("Iterator<");
+                t.fmt(f)?;
+                f.write_str(">")?;
+            }
+            Self::Map(m) => {
+                f.write_str("Map")?;
+            }
+            Self::Null => {
+                f.write_str("null")?;
+            }
+            Self::Number => {
+                f.write_str("number")?;
+            }
+            Self::Promise(p) => {
+                f.write_str("Promise<");
+                p.fmt(f)?;
+                f.write_str(">")?;
+            }
+            Self::Regex => {
+                f.write_str("RegExp")?;
+            }
+            Self::Return => {
+                f.write_str("unknown")?;
+            }
+            Self::String => {
+                f.write_str("string")?;
+            }
+            Self::Super => {
+                f.write_str("Super")?;
+            }
+            Self::Symbol => {
+                f.write_str("symbol")?;
+            }
+            Self::This => {
+                f.write_str("this")?;
+            }
+            Self::Undefined => {
+                f.write_str("undefined")?;
+            }
+            Self::Union(u) => {
+                for (i, t) in u.iter().enumerate(){
+                    t.fmt(f)?;
+
+                    if i == u.len() -1{
+                        break;
+                    }
+                    f.write_str("|")?;
+                };
+            }
+            Self::Unknown { .. } => {
+                f.write_str("unknown")?;
+            }
+        }
+
+        return Ok(())
+    }
+}
+
+impl Type{
+    pub fn has_property(&self, prop: &PropName) -> bool{
+        false
+    }
+}

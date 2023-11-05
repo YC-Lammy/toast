@@ -2,11 +2,9 @@ pub mod typed_hir;
 pub mod untyped_hir;
 
 mod context;
-pub mod type_checker;
-pub mod type_resolver;
 
-mod passes;
-mod ast_transform;
+pub mod ast_transform;
+pub mod passes;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

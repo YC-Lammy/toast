@@ -1,9 +1,11 @@
-use std::{rc::Rc, sync::Arc};
+use std::fmt::Display;
+
+use native_js_common::rc::Rc;
 
 use crate::VarId;
 
-use super::Function;
-use super::{types::*, ClassType, EnumType};
+use super::{Function, DeepClone};
+use super::{types::*, EnumType};
 
 pub use crate::PropName;
 pub use crate::Symbol;
@@ -11,24 +13,25 @@ pub use crate::Symbol;
 use swc_common::Span;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum Callee<TY=Type, CL=ClassType, F=Function> {
+pub enum Callee<TY = Type, F = Function> {
     Super,
     Function(Rc<F>),
     ClassMember {
         span: Span,
-        class: Rc<CL>,
+        /// class or alias
+        class: TY,
         prop: PropName,
         /// only valid in optchain call
         is_optchain: bool,
     },
     Member {
         span: Span,
-        obj: Box<Expr<TY, CL, F>>,
+        obj: Box<Expr<TY, F>>,
         prop: PropName,
         /// only valid in optchain call
         is_optchain: bool,
     },
-    Expr(Box<Expr<TY, CL, F>>),
+    Expr(Box<Expr<TY, F>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,8 +59,7 @@ pub enum BinOp {
     BitXor,
     BitAnd,
     Nullish,
-    In,
-    InstanceOf,
+    In
 }
 
 impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
@@ -74,7 +76,7 @@ impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
             swc_ecmascript::ast::BinaryOp::Gt => Self::Gt,
             swc_ecmascript::ast::BinaryOp::GtEq => Self::Gteq,
             swc_ecmascript::ast::BinaryOp::In => Self::In,
-            swc_ecmascript::ast::BinaryOp::InstanceOf => Self::InstanceOf,
+            swc_ecmascript::ast::BinaryOp::InstanceOf => unreachable!(),
             swc_ecmascript::ast::BinaryOp::LShift => Self::LShift,
             swc_ecmascript::ast::BinaryOp::LogicalAnd => Self::And,
             swc_ecmascript::ast::BinaryOp::LogicalOr => Self::Or,
@@ -89,6 +91,37 @@ impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
             swc_ecmascript::ast::BinaryOp::Sub => Self::Sub,
             swc_ecmascript::ast::BinaryOp::ZeroFillRShift => Self::URShift,
         }
+    }
+}
+
+impl Display for BinOp{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Add => "+",
+            Self::And => "&&",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::BitXor => "^",
+            Self::Div => "/",
+            Self::EqEq => "==",
+            Self::EqEqEq => "===",
+            Self::Exp => "**",
+            Self::Gt => ">",
+            Self::Gteq => ">=",
+            Self::In => "in",
+            Self::LShift => "<<",
+            Self::Lt => "<",
+            Self::Lteq => "<=",
+            Self::Mod => "%",
+            Self::Mul => "*",
+            Self::NotEq => "!=",
+            Self::NotEqEq => "!==",
+            Self::Nullish => "??",
+            Self::Or => "||",
+            Self::RShift => ">>",
+            Self::Sub => "-",
+            Self::URShift => ">>>"
+        })
     }
 }
 
@@ -132,9 +165,9 @@ pub enum AssignOp {
     NullishAssign,
 }
 
-impl From<swc_ecmascript::ast::AssignOp> for AssignOp{
+impl From<swc_ecmascript::ast::AssignOp> for AssignOp {
     fn from(value: swc_ecmascript::ast::AssignOp) -> Self {
-        match value{
+        match value {
             swc_ecmascript::ast::AssignOp::AddAssign => Self::AddAssign,
             swc_ecmascript::ast::AssignOp::AndAssign => Self::AndAssign,
             swc_ecmascript::ast::AssignOp::BitAndAssign => Self::BitAndAssign,
@@ -156,17 +189,22 @@ impl From<swc_ecmascript::ast::AssignOp> for AssignOp{
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum MemberOrVar<TY, CL, F>{
-    Var{
+pub enum MemberOrVar<TY, F> {
+    Var {
         span: Span,
         name: String,
         id: VarId,
-        ty: TY
+        ty: TY,
     },
-    Member{
+    Member {
         span: Span,
-        obj: Box<Expr<TY, CL, F>>,
+        obj: Box<Expr<TY, F>>,
         prop: PropName,
+    },
+    ClassMember{
+        span: Span,
+        class: TY,
+        prop: PropName
     }
 }
 
@@ -190,11 +228,25 @@ pub enum UnaryOp {
     Void,
     Typeof,
     Minus,
-    Pos,
+    Plus,
+}
+
+impl From<swc_ecmascript::ast::UnaryOp> for UnaryOp{
+    fn from(value: swc_ecmascript::ast::UnaryOp) -> Self {
+        match value{
+            swc_ecmascript::ast::UnaryOp::Bang => Self::LogicalNot,
+            swc_ecmascript::ast::UnaryOp::Delete => Self::Delete,
+            swc_ecmascript::ast::UnaryOp::Minus => Self::Minus,
+            swc_ecmascript::ast::UnaryOp::Plus => Self::Plus,
+            swc_ecmascript::ast::UnaryOp::Tilde => Self::BitNot,
+            swc_ecmascript::ast::UnaryOp::TypeOf => Self::Typeof,
+            swc_ecmascript::ast::UnaryOp::Void => Self::Void,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum Expr<TY=Type, CL=ClassType, F=Function> {
+pub enum Expr<TY = Type, F = Function> {
     /// read this
     This(Span),
     /// null
@@ -216,8 +268,7 @@ pub enum Expr<TY=Type, CL=ClassType, F=Function> {
         reg: String,
         flags: String,
     },
-    Function(Rc<F>),
-    TypedFunction {
+    Function {
         span: Span,
         type_args: Vec<TY>,
         func: Rc<F>,
@@ -235,45 +286,41 @@ pub enum Expr<TY=Type, CL=ClassType, F=Function> {
     ImportMeta,
     Array {
         span: Span,
-        values: Vec<Expr<TY, CL, F>>,
+        values: Vec<Expr<TY, F>>,
     },
     /// expr + expr
     Bin {
         span: Span,
         op: BinOp,
-        left: Box<Expr<TY, CL, F>>,
-        right: Box<Expr<TY, CL, F>>,
+        left: Box<Expr<TY, F>>,
+        right: Box<Expr<TY, F>>,
     },
     /// ++ expr
     UnaryOp {
         span: Span,
         op: UnaryOp,
-        value: Box<Expr<TY, CL, F>>,
+        value: Box<Expr<TY, F>>,
     },
 
     /// new Class()
     New {
         span: Span,
-        /// class, alias or unknown
+        /// class or alias
         callee: TY,
-        type_args: Vec<TY>,
-        args: Vec<Expr<TY, CL, F>>,
+        //type_args: Vec<TY>,
+        args: Vec<Expr<TY, F>>,
+    },
+    SuperCall {
+        span: Span,
+        args: Vec<Expr<TY, F>>,
     },
     /// call operation
     Call {
         span: Span,
-        callee: Callee<TY, CL, F>,
+        callee: Callee<TY, F>,
         is_optchain: bool,
         type_args: Vec<TY>,
-        args: Vec<Expr<TY, CL, F>>,
-    },
-
-    /// obj.prop
-    Member {
-        span: Span,
-        obj: Box<Expr<TY, CL, F>>,
-        prop: PropName,
-        is_optchain: bool,
+        args: Vec<Expr<TY, F>>,
     },
 
     /// super.prop, only valid within class methods
@@ -281,18 +328,30 @@ pub enum Expr<TY=Type, CL=ClassType, F=Function> {
         span: Span,
         prop: PropName,
     },
+    /// obj.prop
+    Member {
+        span: Span,
+        obj: Box<Expr<TY, F>>,
+        prop: PropName,
+        /// if type args is not empty, prop must be a method
+        type_args: Vec<TY>,
+        is_optchain: bool,
+    },
     // class static member
     ClassMember {
         span: Span,
-        class: Rc<CL>,
+        // alias or class
+        class: TY,
         prop: PropName,
+        /// if type args is some, prop must be a method
+        type_args: Vec<TY>,
         is_optchain: bool,
     },
     Assign {
         span: Span,
         assign_op: AssignOp,
-        target: MemberOrVar<TY, CL, F>,
-        value: Box<Expr<TY, CL, F>>,
+        target: MemberOrVar<TY, F>,
+        value: Box<Expr<TY, F>>,
     },
     /// access a variable
     ReadVar {
@@ -303,40 +362,53 @@ pub enum Expr<TY=Type, CL=ClassType, F=Function> {
     },
     Update {
         span: Span,
-        target: MemberOrVar<TY, CL, F>,
+        target: MemberOrVar<TY, F>,
         op: UpdateOp,
     },
 
     Await {
         span: Span,
-        value: Box<Expr<TY, CL, F>>,
+        value: Box<Expr<TY, F>>,
     },
     Yield {
         span: Span,
         delegate: bool,
-        value: Box<Expr<TY, CL, F>>,
+        value: Box<Expr<TY, F>>,
     },
     Ternary {
         span: Span,
-        test: Box<Expr<TY, CL, F>>,
-        left: Box<Expr<TY, CL, F>>,
-        right: Box<Expr<TY, CL, F>>,
+        test: Box<Expr<TY, F>>,
+        left: Box<Expr<TY, F>>,
+        right: Box<Expr<TY, F>>,
     },
     Seq {
         span: Span,
-        exprs: Vec<Expr<TY, CL, F>>,
+        exprs: Vec<Expr<TY, F>>,
+    },
+    InstanceOf{
+        span: Span,
+        value: Box<Expr<TY, F>>,
+        ty: TY
     },
     Cast {
         span: Span,
-        value: Box<Expr<TY, CL, F>>,
+        value: Box<Expr<TY, F>>,
         to_ty: TY,
     },
     /// this should be removed after type check
     PrivateNameIn {
         span: Span,
         name: String,
-        value: Box<Expr<TY, CL, F>>,
+        value: Box<Expr<TY, F>>,
     },
 }
 
-impl<TY, CL, F> Expr<TY, CL, F> {}
+impl<TY, F> Expr<TY, F> {}
+
+impl<TY, F> DeepClone for Expr<TY, F> where TY:DeepClone, F:DeepClone{
+    fn deep_clone(&self) -> Self {
+        match self{
+            _ => todo!()
+        }
+    }
+}

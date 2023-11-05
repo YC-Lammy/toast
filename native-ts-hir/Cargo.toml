@@ -10,6 +10,7 @@ native-js-common = {path="../native-js-common"}
 native-ts-parser = {path = "../native-ts-parser"}
 
 num-traits = "*"
+itertools = "*"
 
 swc_ecmascript = {version="0.231", features=["parser", "dep_graph", "transforms", "optimization", "visit", "codegen", "typescript"]}
 swc_common = "*"
