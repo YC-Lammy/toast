@@ -274,12 +274,6 @@ pub enum Expr<TY = Type, F = Function> {
         func: Rc<F>,
     },
 
-    Enum {
-        span: Span,
-        enum_ty: Rc<EnumType>,
-        variant: PropName,
-    },
-
     /// new.target
     NewTarget,
     /// import.meta
@@ -308,10 +302,6 @@ pub enum Expr<TY = Type, F = Function> {
         /// class or alias
         callee: TY,
         //type_args: Vec<TY>,
-        args: Vec<Expr<TY, F>>,
-    },
-    SuperCall {
-        span: Span,
         args: Vec<Expr<TY, F>>,
     },
     /// call operation

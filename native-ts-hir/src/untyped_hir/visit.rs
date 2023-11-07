@@ -148,11 +148,6 @@ impl Visit for Expr {
                 right.visit(visitor)?;
             }
             Self::Bool(_) => {}
-            Self::SuperCall { args, .. } => {
-                for arg in args.iter_mut() {
-                    arg.visit(visitor)?;
-                }
-            }
             Self::Call {
                 callee,
                 type_args,
@@ -200,12 +195,6 @@ impl Visit for Expr {
                     ty.visit(visitor)?;
                 }
                 class.visit(visitor)?;
-            }
-            Self::Enum {
-                enum_ty,
-                ..
-            } => {
-                Type::Enum(enum_ty.clone()).visit(visitor)?;
             }
             Self::Function {
                 type_args,

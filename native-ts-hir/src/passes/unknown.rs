@@ -56,7 +56,6 @@ impl UnknownFinder {
                 type_args: type_args.as_slice().into(),
                 func: func.ty.clone(),
             }),
-            Expr::Enum { enum_ty, .. } => Some(Type::Enum(enum_ty.clone())),
             Expr::NewTarget => todo!(),
             Expr::ImportMeta => todo!(),
             Expr::Array { span:_, values } => {
@@ -184,7 +183,6 @@ impl UnknownFinder {
                 UnaryOp::Typeof => Some(Type::String),
             },
             Expr::New { callee, .. } => return Some(callee.clone()),
-            Expr::SuperCall { .. } => return Some(Type::Super),
             Expr::Call {
                 span:_,
                 callee: Callee::Function(f),
