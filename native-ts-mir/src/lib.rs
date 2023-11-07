@@ -185,6 +185,7 @@ pub enum MIR{
 
     /// negative value
     Neg(ValueID, ValueID),
+    Abs(ValueID, ValueID),
 
     Add(ValueID, ValueID, ValueID),
     Sub(ValueID, ValueID, ValueID),
@@ -224,7 +225,6 @@ pub enum MIR{
 
     // float operations
 
-    Abs(ValueID, ValueID),
     Sqrt(ValueID, ValueID),
     Sin(ValueID, ValueID),
     Cos(ValueID, ValueID),
