@@ -49,6 +49,35 @@ pub enum Type{
     Matrix(MathType, u8, u8),
 }
 
+impl Type{
+    pub fn is_valid(&self) -> bool{
+        match self{
+            Self::Matrix(_, rows, col) => {
+                if *rows %2 != 0 || *col %2 != 0{
+                    return false
+                }
+            }
+            _ => {}
+        }
+        return true
+    }
+
+    pub fn lanes(&self) -> usize{
+        match self{
+            Self::SIMDx2(_) => 2,
+            Self::SIMDx4(_) => 4,
+            Self::SIMDx8(_) => 8,
+            Self::SIMDx16(_) => 16,
+            Self::SIMDx32(_) => 32,
+            Self::SIMDx64(_) => 64,
+            Self::SIMDx128(_) => 128,
+            Self::SIMDx256(_) => 256,
+            Self::Matrix(_, r, c) => (*r * *c) as usize,
+            _ => 1
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MathType{
     I8,
@@ -75,6 +104,14 @@ impl MathType{
             | Self::U64
             | Self::Usize => false,
             _ => true
+        }
+    }
+
+    pub fn is_float(&self) -> bool{
+        match self{
+            Self::F32
+            | Self::F64 => true,
+            _ => false,
         }
     }
 }
@@ -181,10 +218,16 @@ pub struct StackSlot{
 pub enum MIR{
     Uconst(u128, ValueID),
     Iconst(i128, ValueID),
-    Float(f64, ValueID),
+    F64const(f64, ValueID),
+    F32const(f32, ValueID),
+
+    VUconst(Box<[u64]>, ValueID),
+    VIconst(Box<[i64]>, ValueID),
+    VFconst(Box<[f64]>, ValueID),
 
     /// negative value
     Neg(ValueID, ValueID),
+    /// absolute value
     Abs(ValueID, ValueID),
 
     Add(ValueID, ValueID, ValueID),
@@ -203,9 +246,13 @@ pub enum MIR{
     Bitnot(ValueID, ValueID),
     /// bit reverse
     Bitrev(ValueID, ValueID),
+    /// swap the order of bytes
     Bitswap(ValueID, ValueID),
+    /// count number of ones
     BitOnes(ValueID, ValueID),
+    /// count number of leading zeros
     BitLeadingZeros(ValueID, ValueID),
+    /// count number of trailing zeros
     BitTrailingZeros(ValueID, ValueID),
     /// bitcast a value, both type must have the same size
     Bitcast(ValueID, ValueID),
@@ -221,6 +268,7 @@ pub enum MIR{
     /// return the maximum value.
     /// when value type is float, if either value is NaN, NaN is returned.
     Max(ValueID, ValueID),
+    /// if test value is true, return left side, otherwise right.
     Select(ValueID, ValueID, ValueID),
 
     // float operations
@@ -279,6 +327,7 @@ pub enum MIR{
     /// calculates the pointer to elements with offsets.
     ElementPtr(ValueID, Box<[usize]>),
 
+    /// fence
     AtomicFence(Ordering),
     /// (pointer, cmp, new, sucess ordering, failure ordering, loaded value, sucess)
     /// 
@@ -367,17 +416,116 @@ impl<'block> BlockInstBuilder<'block>{
         return Ok(Value { id: id, _mark: PhantomData })
     }
 
-    pub fn fconst(&mut self, ty: Type, value: f64) -> Result<Value<'block>, Error>{
+    pub fn f64const(&mut self, value: f64) -> Value<'block>{
         let id = ValueID::new();
+        self.block.values.push((id, Type::F64));
+        self.block.instructions.push(MIR::F64const(value, id));
+
+        return Value { id: id, _mark: PhantomData }
+    }
+
+    pub fn f32const(&mut self, value: f32) -> Value<'block>{
+        let id = ValueID::new();
+        self.block.values.push((id, Type::F32));
+        self.block.instructions.push(MIR::F32const(value, id));
+
+        return Value { id: id, _mark: PhantomData }
+    }
+
+    pub fn vuconst(&mut self, ty: Type, values: &[u64]) -> Result<Value<'block>, Error>{
+        match ty{
+            Type::SIMDx2(t)
+            | Type::SIMDx4(t)
+            | Type::SIMDx8(t)
+            | Type::SIMDx16(t)
+            | Type::SIMDx32(t)
+            | Type::SIMDx64(t)
+            | Type::SIMDx128(t)
+            | Type::SIMDx256(t) => {
+                if t.is_signed() || t.is_float(){
+                    return Err("invalid type".into())
+                }
+            }
+            _ => {
+                return Err("invalid type".into())
+            }
+        };
+
+        if values.len() != ty.lanes(){
+            return Err("mismatch lane number".into())
+        }
+
+        let id = ValueID::new();
+
         self.block.values.push((id, ty));
-        self.block.instructions.push(MIR::Float(value, id));
+        self.block.instructions.push(MIR::VUconst(values.into(), id));
+
+        return Ok(Value { id: id, _mark: PhantomData })
+    }
+
+    pub fn viconst(&mut self, ty: Type, values: &[i64]) -> Result<Value<'block>, Error>{
+        match ty{
+            Type::SIMDx2(t)
+            | Type::SIMDx4(t)
+            | Type::SIMDx8(t)
+            | Type::SIMDx16(t)
+            | Type::SIMDx32(t)
+            | Type::SIMDx64(t)
+            | Type::SIMDx128(t)
+            | Type::SIMDx256(t) => {
+                if !(t.is_signed() && !t.is_float()){
+                    return Err("invalid type".into())
+                }
+            }
+            _ => {
+                return Err("invalid type".into())
+            }
+        };
+
+        if values.len() != ty.lanes(){
+            return Err("mismatch lane number".into())
+        }
+
+        let id = ValueID::new();
+
+        self.block.values.push((id, ty));
+        self.block.instructions.push(MIR::VIconst(values.into(), id));
+
+        return Ok(Value { id: id, _mark: PhantomData })
+    }
+
+    pub fn vf64const(&mut self, ty: Type, values: &[f64]) -> Result<Value<'block>, Error>{
+        match ty{
+            Type::SIMDx2(t)
+            | Type::SIMDx4(t)
+            | Type::SIMDx8(t)
+            | Type::SIMDx16(t)
+            | Type::SIMDx32(t)
+            | Type::SIMDx64(t)
+            | Type::SIMDx128(t)
+            | Type::SIMDx256(t) => {
+                if !t.is_float(){
+                    return Err("invalid type".into())
+                }
+            }
+            _ => {
+                return Err("invalid type".into())
+            }
+        };
+
+        if values.len() != ty.lanes(){
+            return Err("mismatch lane number".into())
+        }
+
+        let id = ValueID::new();
+
+        self.block.values.push((id, ty));
+        self.block.instructions.push(MIR::VFconst(values.into(), id));
 
         return Ok(Value { id: id, _mark: PhantomData })
     }
 
     pub fn neg(&mut self, value: Value<'block>) -> Result<Value<'block>, Error>{
-        let id = ValueID::new();
-
         let ty = if let Ok(i) = self.block.values.binary_search_by(|(v, _)|v.cmp(&value.id)){
             self.block.values[i].1.clone()
         } else{
@@ -401,11 +549,48 @@ impl<'block> BlockInstBuilder<'block>{
                 return Err("value type must be integer or floating point".into())
             }
         }
+        
+        let id = ValueID::new();
+
         self.block.values.push((id, ty));
         self.block.instructions.push(MIR::Neg(value.id, id));
 
         return Ok(Value { id: id, _mark: PhantomData })
     }
 
+    pub fn abs(&mut self, value: Value<'block>) -> Result<Value<'block>, Error>{
+        let ty = if let Ok(i) = self.block.values.binary_search_by(|(v, _)|v.cmp(&value.id)){
+            self.block.values[i].1.clone()
+        } else{
+            return Err("value does not belong to block".into())
+        };
 
+        match ty{
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::Isize
+            | Type::F32
+            | Type::F64
+            | Type::SIMDx2(_)
+            | Type::SIMDx4(_)
+            | Type::SIMDx8(_)
+            | Type::SIMDx16(_)
+            | Type::SIMDx32(_)
+            | Type::SIMDx64(_)
+            | Type::SIMDx128(_)
+            | Type::SIMDx256(_)
+            | Type::Matrix(_, _, _) => {}
+            _ => {
+                return Err("value type must be integer or floating point".into())
+            }
+        }
+
+        let id = ValueID::new();
+        self.block.values.push((id, ty));
+        self.block.instructions.push(MIR::Abs(value.id, id));
+
+        return Ok(Value { id: id, _mark: PhantomData })
+    }
 }
