@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use native_js_common::error::Error;
+use native_js_common::{error::Error, rc::Rc};
 use swc_common::Span;
 
-use crate::{VarId, untyped_hir::{Type, visit::{Visitor, BreakOrContinue}, Expr, AssignOp, MemberOrVar, BinOp, Callee}, PropName};
+use crate::{VarId, untyped_hir::{Type, visit::{Visitor, BreakOrContinue}, Expr, AssignOp, MemberOrVar, BinOp, Callee, ClassMethod, FunctionType}, PropName, passes::generic_function_resolver::GenericFunctionResolver};
 
 
 
@@ -16,19 +16,319 @@ pub struct TypeChecker{
 }
 
 impl TypeChecker{
-    fn trace_member(&self, obj: &Type, prop: &PropName) -> Result<Type, Error<Span>>{
+    fn trace_member(&self, span:Span, obj: &mut Type, prop: &PropName, type_args: &[Type]) -> Result<Type, Error<Span>>{
         match obj{
-            Type::Alias { .. } => unreachable!(),
-            Type::Unknown { .. } => todo!(),
-            
-        }
+            Type::Alias { .. } => panic!("unresolved alias"),
+            Type::Generic(_) => panic!("unresolved generic"),
+            Type::Unknown { span, .. } => {
+                return Err(Error::syntax_error(*span, "cannot infer type, type annotation required"))
+            }
+            Type::Any
+            | Type::Undefined
+            | Type::Null => {
+                return Err(Error::syntax_error(span, format!("type '{}' has no property '{}'", obj, prop)))
+            }
+            Type::Class { span:_, type_args: class_ty_args, class } => {
+                // gnerics should be resolved
+                debug_assert!(class_ty_args.is_none());
+
+                // find attribute
+                if let Some(attr) = class.attributes.iter().find(|a|a.name.eq(prop)){
+
+                    // attributes should not have type arguments
+                    if !type_args.is_empty(){
+                        return Err(Error::syntax_error(span, format!("property '{}' expected 0 type arguments", prop)))
+                    }
+
+                    return Ok(attr.ty.clone())
+                }
+
+                // create a new propname for method
+                let propname = 
+                if !type_args.is_empty(){
+                    let mut id = prop.to_string();
+                    id.push_str("<");
+                    
+                    for ty in type_args.iter(){
+                        id.push_str(&ty.to_string())
+                    }
+
+                    id.push_str(">");
+
+                    PropName::Ident(id)
+
+                } else{
+                    prop.clone()
+                };
+
+                // find method
+                if let Some(m) = class.methods.iter_mut().find(|m|m.name.eq(&propname)){
+                    if !m.function.ty.generics.is_empty(){
+                        return Err(Error::syntax_error(span, "missing type arguments"));
+                    }
+                    
+                    return Ok(Type::Function { type_args: None, func: m.function.ty.clone() })
+                }
+
+                // may have to resolve the function
+                if !type_args.is_empty(){
+                    // find the non typed function
+                    if let Some(m) = class.methods.iter_mut().find(|m|m.name.eq(prop)){
+                        if type_args.len() > m.function.ty.generics.len(){
+                            return Err(Error::syntax_error(span, format!("property '{}' expected {} type arguments", propname, m.function.ty.generics.len())))
+                        }
+
+                        // resolve the generic function
+                        let mut resolver = GenericFunctionResolver::default();
+
+                        // resolve the function with arguments
+                        if let Some(func) = resolver.resolve_function_with_args(span, &mut m.function, type_args)?{
+
+                            // clone the function type
+                            let ty = func.ty.clone();
+
+                            // push the method to class
+                            class.methods.push(ClassMethod{
+                                name: propname,
+                                function: func
+                            });
+
+                            // return the new function type
+                            return Ok(Type::Function { type_args:None, func: ty })
+                        }
+
+                        // the function does not have to be replaced
+                        return Ok(Type::Function { 
+                            type_args: None, 
+                            func: m.function.ty.clone()
+                        })
+                    }
+                }
+                
+                // try to find it from super class
+                if let Some(e) = &mut class.extends{
+                    if let Ok(ty) = self.trace_member(span, e, prop, type_args){
+                        return Ok(ty)
+                    }
+                }
+
+                return Err(Error::syntax_error(span, format!("class '{}' has no property '{}'", class.name, propname)))
+            }
+            Type::Interface { span:_, type_args: iface_ty_args, interface } => {
+                debug_assert!(iface_ty_args.is_none());
+
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, format!("property '{}' expected 0 type arguments", prop)))
+                }
+
+                debug_assert!(interface.generics.is_empty());
+
+                if let Some(prop) = interface.props.iter().find(|p|p.name.eq(prop)){
+                    if prop.optinal{
+                        return Ok(prop.ty.clone().union(Type::Undefined))
+                    }
+                    return Ok(prop.ty.clone())
+                }
+
+                for e in interface.extends.iter_mut(){
+                    if let Ok(ty) = self.trace_member(span, e, prop, &[]){
+                        return Ok(ty)
+                    }
+                }
+            }
+            Type::Enum(_e) => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+
+                return Err(Error::syntax_error(span, "Enum has no properties"))
+            }
+            Type::Union(u) => {
+
+            }
+            Type::Array(a) => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+
+                match prop{
+                    PropName::Int(i) => {
+                        // return the element type
+                        if *i >= 0{
+                            return Ok(a.as_ref().clone())
+                        }
+                    }
+                    PropName::Ident(id) => match id.as_str(){
+
+                    },
+                    _ => {}
+                }
+            }
+            Type::Iterator(i) => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Promise(p) => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Regex => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::BigInt => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Int
+            | Type::Number => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+
+                match prop{
+                    PropName::Ident(id) => match id.as_str(){
+                        "toExponential" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::String
+                                })
+                            })
+                        }
+                        "toFixed" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::String
+                                })
+                            })
+                        }
+                        "toLocalString" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::String
+                                })
+                            })
+                        }
+                        "toPrecision" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::Number
+                                })
+                            })
+                        }
+                        "toString" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::String
+                                })
+                            })
+                        }
+                        "valueOf" => {
+                            return Ok(Type::Function { 
+                                type_args: None, 
+                                func: Rc::new(FunctionType{
+                                    visit_fingerprint: 0,
+                                    is_definite: true,
+                                    this_ty: Type::Number,
+                                    generics: Vec::new(),
+                                    params: Vec::new(),
+                                    return_ty: Type::Number
+                                })
+                            })
+                        }
+                        _ => {}
+                    }
+                    _ => {}
+                };
+            }
+
+            Type::String => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Symbol => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Bool => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Function { type_args: func_ty_args, func } => {
+                debug_assert!(func_ty_args.is_none());
+
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::Map(t) => {
+                if !type_args.is_empty(){
+                    return Err(Error::syntax_error(span, "expected 0 type arguments"))
+                }
+            }
+            Type::This => {
+                let mut ty = self.this_type.clone();
+                return self.trace_member(span, &mut ty, prop, type_args)
+            }
+            Type::Super => {
+                if let Some(super_ty) = &self.super_type{
+                    let ref mut super_ty = super_ty.clone();
+                    return self.trace_member(span, super_ty, prop, type_args)
+                } else{
+                    return Err(Error::syntax_error(span, "'super' can only be referenced in class methods"))
+                }
+            }
+            Type::Return => {
+                let ref mut rty = self.return_type.clone();
+                return self.trace_member(span, rty, prop, type_args)
+            }
+        };
+
+        return Err(Error::syntax_error(span, format!("type '{}' has no property '{}'", obj, prop)))
     }
 
-    fn trace_call(&self, span:Span, callee_ty:&Type, args: &[Expr], is_optchain: bool, expected: Option<&Type>) -> Result<Type, Error<Span>>{
+    fn trace_call(&mut self, span:Span, callee_ty:&Type, args: &mut [Expr], is_optchain: bool, expected: Option<&Type>) -> Result<Type, Error<Span>>{
         let func_ty =
         match &callee_ty{
             Type::Function { type_args, func } => {
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
 
                 func.clone()
             }
@@ -46,7 +346,7 @@ impl TypeChecker{
                         Type::Undefined => {},
                         Type::Null => {},
                         Type::Function { type_args, func } => {
-                            debug_assert!(type_args.is_empty());
+                            debug_assert!(type_args.is_none());
 
                             func_ty = Some(func.clone());
                         }
@@ -73,10 +373,10 @@ impl TypeChecker{
 
         // check param length
         if args.len() != func_ty.params.len(){
-            return Err(Error::syntax_error(span, format!("function '{}' expected {} arguments, {} were given", Type::Function{ type_args: Box::new([]), func: func_ty}, func_ty.params.len(), args.len())))
+            return Err(Error::syntax_error(span, format!("function '{}' expected {} arguments, {} were given", Type::Function{ type_args: None, func: func_ty.clone()}, func_ty.params.len(), args.len())))
         }
         // check arguments
-        for (i, arg) in args.iter().enumerate(){
+        for (i, arg) in args.iter_mut().enumerate(){
             let t = self.trace_type(arg, func_ty.params.get(i))?;
         };
         // check return type
@@ -99,13 +399,13 @@ impl TypeChecker{
         todo!()
     }
 
-    fn trace_type(&self, expr:&Expr, expected: Option<&Type>) -> Result<Type, Error<Span>>{
+    fn trace_type(&mut self, expr:&mut Expr, expected: Option<&Type>) -> Result<Type, Error<Span>>{
         match expr{
             Expr::Array { span, values } => {
 
                 let mut tys = Vec::new();
                 // loop through elements
-                for e in values.iter(){
+                for e in values.iter_mut(){
                     // trace element type
                     let t = self.trace_type(e, None)?;
 
@@ -179,13 +479,13 @@ impl TypeChecker{
                     return Err(Error::syntax_error(*span, format!("variable '{}' use before declare", name)))
                 };
 
-                self.trace_type(&value, Some(ty))?;
+                self.trace_type(value, Some(ty))?;
 
                 return Ok(ty.clone())
             },
             Expr::Await { span, value } => {
 
-                let ty = self.trace_type(&value, None)?;
+                let ty = self.trace_type(value, None)?;
 
                 if let Type::Promise(p) = ty{
                     if let Some(expected) = expected{
@@ -207,8 +507,8 @@ impl TypeChecker{
                 return Ok(Type::BigInt)
             }
             Expr::Bin { span, op, left, right } => {
-                let left_ty = self.trace_type(&left, None)?;
-                let right_ty = self.trace_type(&right, None)?;
+                let left_ty = self.trace_type(left, None)?;
+                let right_ty = self.trace_type(right, None)?;
 
                 let re_ty =
                 match op{
@@ -314,7 +614,7 @@ impl TypeChecker{
             } => {
                 debug_assert!(type_args.is_empty());
 
-                let callee_ty = self.trace_type(&calee_expr, None)?;
+                let callee_ty = self.trace_type(calee_expr, None)?;
 
                 return self.trace_call(*span, &callee_ty, args, *is_optchain, expected)
             }
@@ -329,14 +629,14 @@ impl TypeChecker{
 
                 // check param length
                 if args.len() != func.ty.params.len(){
-                    return Err(Error::syntax_error(*span, format!("function '{}' expected {} arguments, {} were given", Type::Function{ type_args: Box::new([]), func: func.ty.clone()}, func.ty.params.len(), args.len())))
+                    return Err(Error::syntax_error(*span, format!("function '{}' expected {} arguments, {} were given", Type::Function{ type_args: None, func: func.ty.clone()}, func.ty.params.len(), args.len())))
                 }
 
                 // check this type
                 self.fulfills(&func.ty.this_ty, &self.this_type)?;
 
                 // check arguments
-                for (i, arg) in args.iter().enumerate(){
+                for (i, arg) in args.iter_mut().enumerate(){
                     let t = self.trace_type(arg, func.ty.params.get(i))?;
                 };
 
@@ -360,11 +660,9 @@ impl TypeChecker{
                 type_args, 
                 args 
             } => {
-                debug_assert!(type_args.is_empty());
+                let mut obj_ty = self.trace_type(obj, None)?;
 
-                let obj_ty = self.trace_type(&obj, None)?;
-
-                let callee_ty = self.trace_member(&obj_ty, prop)?;
+                let callee_ty = self.trace_member(*span, &mut obj_ty, prop, &type_args)?;
 
                 let old_this = core::mem::replace(&mut self.this_type, obj_ty);
 
@@ -375,7 +673,7 @@ impl TypeChecker{
                 return Ok(return_ty)
             }
             Expr::Cast { span, value, to_ty } => {
-                let ty = self.trace_type(&value, None)?;
+                let ty = self.trace_type(value, None)?;
 
                 self.fulfills(&to_ty, &ty)?;
 
@@ -403,16 +701,22 @@ impl TypeChecker{
                     _ => todo!()
                 };
 
-                return Ok()
+                return Ok(Type::Undefined)
             }
             Expr::SuperMember { span, prop } => {
+                if self.super_type.is_none(){
+                    return Err(Error::syntax_error(*span, "'super' keyword can only be accessed inside class method."))
+                };
 
+                let ty = self.super_type.as_mut().unwrap();
+
+                return self.trace_member(*span, ty, prop, &[])
             }
             Expr::Function { span, type_args, func } => {
                 debug_assert!(type_args.is_empty());
 
                 let ty = Type::Function { 
-                    type_args: Box::new([]), 
+                    type_args: None, 
                     func: func.ty.clone()
                 };
                 if let Some(expected) = expected{
@@ -438,9 +742,9 @@ impl TypeChecker{
             Expr::Member { span, obj, prop, type_args, is_optchain } => {
                 debug_assert!(type_args.is_empty());
 
-                let obj_ty = self.trace_type(&obj, None)?;
+                let mut obj_ty = self.trace_type(obj, None)?;
 
-                let ty = self.trace_member(&obj_ty, prop)?;
+                let ty = self.trace_member(*span, &mut obj_ty, prop, &type_args)?;
 
                 if let Some(expected) = expected{
                     self.fulfills(expected, &ty)?;
@@ -451,7 +755,7 @@ impl TypeChecker{
             Expr::New { span, callee, args } => {
                 match callee{
                     Type::Class { span, type_args, class } => {
-                        debug_assert!(type_args.is_empty());
+                        debug_assert!(type_args.is_none());
                     }
                     _ => {
                         return Err(Error::syntax_error(*span, "new operator can only be called on a class"))
@@ -500,7 +804,7 @@ impl TypeChecker{
             Expr::Seq { span, exprs } => {
                 let mut ty = None;
 
-                for (i, e) in exprs.iter().enumerate(){
+                for (i, e) in exprs.iter_mut().enumerate(){
                     if i == exprs.len() -1{
                         ty = Some(self.trace_type(e, expected)?);
                     } else{
@@ -526,9 +830,9 @@ impl TypeChecker{
                 Ok(Type::String)
             },
             Expr::Ternary { span, test, left, right } => {
-                let test_ty = self.trace_type(&test, None)?;
-                let left_ty = self.trace_type(&left, None)?;
-                let right_ty = self.trace_type(&right, None)?;
+                let test_ty = self.trace_type(test, None)?;
+                let left_ty = self.trace_type(left, None)?;
+                let right_ty = self.trace_type(right, None)?;
 
                 let ty = left_ty.union(right_ty);
 

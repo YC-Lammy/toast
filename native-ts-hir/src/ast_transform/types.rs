@@ -100,7 +100,7 @@ impl Translater {
                         ));
                     }
                     Ok(Type::Function {
-                        type_args: Box::new([]),
+                        type_args: None,
                         func: self.translate_fn_ty(
                             &f.params,
                             f.type_params.as_deref(),
@@ -326,7 +326,11 @@ impl Translater {
 
                 return Ok(Type::Class {
                     span: sp,
-                    type_args: ty_args.into(),
+                    type_args: if ty_args.is_empty(){
+                        None
+                    } else{
+                        Some(ty_args.into_boxed_slice())
+                    },
                     class: c.clone(),
                 });
             }
@@ -376,7 +380,11 @@ impl Translater {
 
                 return Ok(Type::Interface {
                     span: sp,
-                    type_args: ty_args.into(),
+                    type_args: if ty_args.is_empty(){
+                        None
+                    } else{
+                        Some(ty_args.into_boxed_slice())
+                    },
                     interface: i.clone(),
                 });
             }
@@ -408,7 +416,11 @@ impl Translater {
 
                 return Ok(Type::Alias {
                     span: sp,
-                    type_args: ty_args.into(),
+                    type_args: if ty_args.is_empty(){
+                        None
+                    } else{
+                        Some(ty_args.into_boxed_slice())
+                    },
                     alias: a.clone(),
                 });
             }

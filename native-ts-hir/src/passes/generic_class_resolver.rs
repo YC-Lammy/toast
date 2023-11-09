@@ -17,19 +17,24 @@ impl Visitor for GenericClassResolver{
 
     fn visit_type(&mut self, ty: &mut Type) -> Result<BreakOrContinue, Self::Error> {
         if let Type::Class { span, type_args, class } = ty{
-            if type_args.len() > class.generics.len(){
-                return Err(Error::syntax_error(*span, format!("class '{}' expected {} type arguments, {} were given", class.name, class.generics.len(), type_args.len())))
+
+            let len = type_args.as_ref().map(|a|a.len()).unwrap_or(0);
+
+            if len > class.generics.len(){
+                return Err(Error::syntax_error(*span, format!("class '{}' expected {} type arguments, {} were given", class.name, class.generics.len(), len)))
             };
 
             if class.generics.len() == 0{
                 return Ok(BreakOrContinue::Continue)
             };
 
+            let ty_args = type_args.as_mut().map(|b|b.as_mut()).unwrap_or(&mut []);
+
             // already resolved
             if let Some((_, _, resolved)) = self.resolved.iter().find(|(base, args, _)|{
-                *base == class.as_ref() as *const _ && args == type_args
+                *base == class.as_ref() as *const _ && args.as_ref() == ty_args
             }){
-                *type_args = Box::new([]);
+                *type_args = None;
                 *class = resolved.clone();
 
                 return Ok(BreakOrContinue::Continue)
@@ -38,19 +43,19 @@ impl Visitor for GenericClassResolver{
             let mut resolved_generics = HashMap::new();
             for (i, g) in class.generics.iter().enumerate(){
                 let ty =
-                if let Some(ty) = type_args.get(i){
+                if let Some(ty) = ty_args.get(i){
                     resolved_generics.insert(g.id, ty.clone());
                     ty
                 } else if let Some(ty) = &g.default{
                     resolved_generics.insert(g.id, ty.clone());
                     ty
                 } else{
-                    return Err(Error::syntax_error(*span, format!("class '{}' expected {} type arguments, {} were given", class.name, class.generics.len(), type_args.len())))
+                    return Err(Error::syntax_error(*span, format!("class '{}' expected {} type arguments, {} were given", class.name, class.generics.len(), ty_args.len())))
                 };
 
                 if let Some(constrain) = &g.constrain{
                     if let Type::Interface { span, type_args, interface } = constrain{
-                        debug_assert!(type_args.is_empty());
+                        debug_assert!(type_args.is_none());
 
                         if !interface.check(ty){
                             return Err(Error::syntax_error(*span, format!("type argument '{:?}' does not fulfill interface '{}'", ty, interface.name)))
@@ -73,10 +78,9 @@ impl Visitor for GenericClassResolver{
             
             let new_class = Rc::new(new_class);
             
-            let type_args = core::mem::replace(type_args, Box::new([]));
-
-            self.resolved.push((class.as_ref(), type_args, new_class.clone()));
-
+            self.resolved.push((class.as_ref(), ty_args.to_vec().into_boxed_slice(), new_class.clone()));
+            
+            *type_args = None;
             *class = new_class.clone();
         }
         return Ok(BreakOrContinue::Continue)

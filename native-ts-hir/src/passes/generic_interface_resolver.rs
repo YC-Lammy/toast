@@ -27,40 +27,45 @@ impl Visitor for GenericInterfaceResolver{
                 type_args, 
                 interface
             } => {
-                if type_args.len() > interface.generics.len(){
-                    return Err(Error::syntax_error(*span, format!("interface '{}' expected {} type arguments, {} were given", interface.name, interface.generics.len(), type_args.len())))
+
+                let len = type_args.as_ref().map(|a|a.len()).unwrap_or(0);
+
+                if len > interface.generics.len(){
+                    return Err(Error::syntax_error(*span, format!("interface '{}' expected {} type arguments, {} were given", interface.name, interface.generics.len(), len)))
                 };
 
                 if interface.generics.len() == 0{
                     return Ok(BreakOrContinue::Continue)
                 };
 
-                // already resolved
-            if let Some((_, _, resolved)) = self.resolved.iter().find(|(base, args, _)|{
-                *base == interface.as_ref() as *const _ && args == type_args
-            }){
-                *type_args = Box::new([]);
-                *interface = resolved.clone();
+                let ty_args = type_args.as_mut().map(|b|b.as_mut()).unwrap_or(&mut []);
 
-                return Ok(BreakOrContinue::Continue)
-            }
+                // already resolved
+                if let Some((_, _, resolved)) = self.resolved.iter().find(|(base, args, _)|{
+                    *base == interface.as_ref() as *const _ && args.as_ref() == ty_args
+                }){
+                    *type_args = None;
+                    *interface = resolved.clone();
+
+                    return Ok(BreakOrContinue::Continue)
+                }
 
                 let mut resolved_generics = HashMap::new();
                 for (i, g) in interface.generics.iter().enumerate(){
                     let ty =
-                    if let Some(ty) = type_args.get(i){
+                    if let Some(ty) = ty_args.get(i){
                         resolved_generics.insert(g.id, ty.clone());
                         ty
                     } else if let Some(ty) = &g.default{
                         resolved_generics.insert(g.id, ty.clone());
                         ty
                     } else{
-                        return Err(Error::syntax_error(*span, format!("interface '{}' expected {} type arguments, {} were given", interface.name, interface.generics.len(), type_args.len())))
+                        return Err(Error::syntax_error(*span, format!("interface '{}' expected {} type arguments, {} were given", interface.name, interface.generics.len(), ty_args.len())))
                     };
 
                     if let Some(constrain) = &g.constrain{
                         if let Type::Interface { span, type_args, interface } = constrain{
-                            debug_assert!(type_args.is_empty());
+                            debug_assert!(type_args.is_none());
 
                             if !interface.check(ty){
                                 return Err(Error::syntax_error(*span, format!("type argument '{:?}' does not fulfill interface '{}'", ty, interface.name)))
@@ -83,7 +88,7 @@ impl Visitor for GenericInterfaceResolver{
                 new_interface.visit(&mut replacer)?;
 
                 // replace type arguements
-                *type_args = Box::new([]);
+                *type_args = None;
                 // replace interface
                 *interface = Rc::new(new_interface);
             }
@@ -101,7 +106,7 @@ fn test_generic_interface_resolver(){
 
     let mut iface = Type::Interface { 
         span: Span::default(), 
-        type_args: Box::new([Type::Any, Type::BigInt, Type::Int]), 
+        type_args: Some(Box::new([Type::Any, Type::BigInt, Type::Int])), 
         interface: Rc::new(InterfaceType{
             name: "MyIface".to_string(),
             visited_fingerprint: 0,
@@ -149,7 +154,7 @@ fn test_generic_interface_resolver(){
     assert!(re.is_ok());
 
     if let Type::Interface { span:_, type_args, interface } = iface{
-        assert!(type_args.is_empty());
+        assert!(type_args.is_none());
         assert!(interface.is_definite);
         assert!(interface.generics.is_empty());
         assert!(interface.extends.is_empty());

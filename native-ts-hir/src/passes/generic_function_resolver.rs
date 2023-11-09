@@ -6,11 +6,11 @@ use swc_common::Span;
 use crate::untyped_hir::{visit::{Visitor, BreakOrContinue, Visit}, Expr, Function, Type, Callee, DeepClone};
 
 
-
+#[derive(Default)]
 pub struct GenericFunctionResolver{}
 
 impl GenericFunctionResolver{
-    fn resolve_function_with_args(&mut self, sp:Span, func: &mut Function, type_args: &mut Vec<Type>) -> Result<Option<Function>, Error<Span>>{
+    pub fn resolve_function_with_args(&mut self, sp:Span, func: &mut Function, type_args: &[Type]) -> Result<Option<Function>, Error<Span>>{
         if type_args.len() > func.ty.generics.len(){
             return Err(Error::syntax_error(sp, format!("function '{}' expected {} type arguments, {} were given", func.name, func.ty.generics.len(), type_args.len())))
         }
@@ -40,7 +40,7 @@ impl GenericFunctionResolver{
             if let Some(c) = &g.constrain{
                 if let Type::Interface { span, type_args, interface } = c{
                     // interface should be resolved
-                    debug_assert!(type_args.is_empty());
+                    debug_assert!(type_args.is_none());
 
                     // check if type fulfils interface
                     if !interface.check(ty){
@@ -109,9 +109,7 @@ impl Visitor for GenericFunctionResolver{
                         args: args.clone()
                     };
                 }
-                
             }
-            
             // callee is a static function
             Expr::Call { 
                 span, 
@@ -130,7 +128,7 @@ impl Visitor for GenericFunctionResolver{
                 args
             } => {
                 // the class should be concrete
-                debug_assert!(class_type_args.is_empty());
+                debug_assert!(class_type_args.is_none());
 
                 // try finding the static function
                 if let Some(method) = class.static_functions.iter_mut().find(|m|m.name.eq(prop)){
@@ -156,6 +154,25 @@ impl Visitor for GenericFunctionResolver{
                     };
                 }
             }
+            Expr::Call { 
+                span, 
+                callee: Callee::Member { 
+                    span:_, 
+                    obj, 
+                    prop, 
+                    is_optchain: member_is_optchain 
+                }, 
+                is_optchain: call_is_optchain, 
+                type_args, 
+                args 
+            } => {
+                // if member is optchain
+                if *member_is_optchain && !*call_is_optchain{
+                    return Err(Error::syntax_error(*span, "cannot call on undefined"))
+                }
+
+                
+            }
             // retrive a concrete static function
             Expr::ClassMember {
                 span, 
@@ -169,7 +186,7 @@ impl Visitor for GenericFunctionResolver{
                 is_optchain: _ // does not matter if it is a class method
             } => {
                 // should be resolved
-                debug_assert!(class_type_args.is_empty());
+                debug_assert!(class_type_args.is_none());
 
                 // find the function
                 if let Some(method) = class.static_functions.iter_mut().find(|m|m.name.eq(prop)){

@@ -52,6 +52,30 @@ pub enum PropName {
     Symbol(Symbol),
 }
 
+impl core::fmt::Display for PropName{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self{
+            Self::Ident(id) => f.write_str(&id),
+            Self::String(s) => {
+                f.write_str("\"")?;
+                f.write_str(s)?;
+                f.write_str("\"")
+            }
+            Self::Int(i) => {
+                let mut buf = native_js_common::itoa::Buffer::new();
+                f.write_str(buf.format(*i))
+            }
+            Self::Private(p) => {
+                f.write_str("#")?;
+                f.write_str(p)
+            }
+            Self::Symbol(s) => {
+                s.fmt(f)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Symbol {
     Iterator,
@@ -69,4 +93,28 @@ pub enum Symbol {
     ToPrimitive,
     ToStringTag,
     Unscopables,
+}
+
+impl core::fmt::Display for Symbol{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Symbol.")?;
+
+        f.write_str(match self{
+            Self::AsyncDispose => "asyncDispose",
+            Self::AsyncIterator => "asyncIterator",
+            Self::Dispose => "dispose",
+            Self::HasInstance => "hasInstance",
+            Self::IsConcatSpreadable => "isConcatSpreadable",
+            Self::Iterator => "iterator",
+            Self::Match => "match",
+            Self::MatchAll => "matchAll",
+            Self::Replace => "replace",
+            Self::Search => "search",
+            Self::Species => "species",
+            Self::Split => "split",
+            Self::ToPrimitive => "toPrimitive",
+            Self::ToStringTag => "toStringTag",
+            Self::Unscopables => "unscopables"
+        })
+    }
 }

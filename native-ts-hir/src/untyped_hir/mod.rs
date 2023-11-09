@@ -39,6 +39,15 @@ impl<T:DeepClone> DeepClone for Box<[T]>{
     }
 }
 
+impl<T:DeepClone> DeepClone for Option<T>{
+    fn deep_clone(&self) -> Self {
+        match self{
+            Some(v) => Some(v.deep_clone()),
+            None => None
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct GenericParam {
     pub name: String,

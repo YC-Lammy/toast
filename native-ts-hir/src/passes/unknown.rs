@@ -52,10 +52,14 @@ impl UnknownFinder {
                 span:_,
                 type_args,
                 func,
-            } => Some(Type::Function {
-                type_args: type_args.as_slice().into(),
+            } => {
+                debug_assert!(type_args.is_empty());
+
+                Some(Type::Function {
+                type_args: None,
                 func: func.ty.clone(),
-            }),
+                })
+            },
             Expr::NewTarget => todo!(),
             Expr::ImportMeta => todo!(),
             Expr::Array { span:_, values } => {
@@ -234,7 +238,7 @@ impl UnknownFinder {
                 match &f {
                     Type::Function { type_args, func } => {
                         // should be resolved
-                        debug_assert!(type_args.is_empty());
+                        debug_assert!(type_args.is_none());
 
                         return Some(func.return_ty.clone());
                         
@@ -298,7 +302,7 @@ impl UnknownFinder {
         match obj {
             Type::Class { span:_, type_args, class } => {
                 // should be resolved
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
                 debug_assert!(class.generics.is_empty());
 
                 if let Some(attr) = class.attributes.iter().find(|attr| attr.name.eq(prop)) {
@@ -309,7 +313,7 @@ impl UnknownFinder {
                     debug_assert!(m.function.ty.generics.is_empty());
 
                     return Some(Type::Function { 
-                        type_args: Box::new([]), 
+                        type_args: None, 
                         func: m.function.ty.clone() 
                     })
                 }
@@ -324,7 +328,7 @@ impl UnknownFinder {
                 interface,
             } => {
                 // shoould be resolved
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
                 debug_assert!(interface.generics.is_empty());
 
                 if let Some(attr) = interface.props.iter().find(|attr| attr.name.eq(prop)) {
@@ -336,7 +340,7 @@ impl UnknownFinder {
 
                 if let Some(m) = interface.methods.iter().find(|m|m.name.eq(prop)){
                     return Some(Type::Function{
-                        type_args: Box::new([]),
+                        type_args: None,
                         func: m.ty.clone()
                     })
                 }
@@ -375,7 +379,7 @@ impl UnknownFinder {
     ) -> Option<Type> {
         match class_ty{
             Type::Class { span:_, type_args, class } => {
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
 
                 if let Some(p) = class.static_props.iter().find(|p|p.name.eq(prop)){
                     return Some(p.ty.clone())

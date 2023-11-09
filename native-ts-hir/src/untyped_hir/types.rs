@@ -42,7 +42,7 @@ pub enum Type {
     Bool,
     /// a function
     Function {
-        type_args: Box<[Type]>,
+        type_args: Option<Box<[Type]>>,
         func: Rc<FunctionType>,
     },
     /// a union type
@@ -50,13 +50,13 @@ pub enum Type {
     /// an instance of class
     Class {
         span: Span,
-        type_args: Box<[Type]>,
+        type_args: Option<Box<[Type]>>,
         class: Rc<ClassType>,
     },
     Enum(Rc<EnumType>),
     Interface {
         span: Span,
-        type_args: Box<[Type]>,
+        type_args: Option<Box<[Type]>>,
         interface: Rc<InterfaceType>,
     },
 
@@ -64,7 +64,7 @@ pub enum Type {
     //Alias(Rc<AliasType>),
     Alias {
         span: Span,
-        type_args: Box<[Type]>,
+        type_args: Option<Box<[Type]>>,
         alias: Rc<AliasType>,
     },
 
@@ -292,7 +292,7 @@ impl core::fmt::Display for Type{
         match self{
             Self::Alias { span, type_args, alias } => {
                 f.write_str(&alias.name)?;
-                if !type_args.is_empty(){
+                if let Some(type_args) = type_args{
                     f.write_str("<")?;
 
                     for (i, t) in type_args.iter().enumerate(){
@@ -321,7 +321,7 @@ impl core::fmt::Display for Type{
             }
             Self::Class { span, type_args, class } => {
                 f.write_str(&class.name)?;
-                if !type_args.is_empty(){
+                if let Some(type_args) = type_args{
                     f.write_str("<")?;
 
                     for (i, t) in type_args.iter().enumerate(){
@@ -361,7 +361,7 @@ impl core::fmt::Display for Type{
             }
             Self::Interface { span, type_args, interface } => {
                 f.write_str(&interface.name)?;
-                if !type_args.is_empty(){
+                if let Some(type_args) = type_args{
                     f.write_str("<")?;
 
                     for (i, t) in type_args.iter().enumerate(){

@@ -215,7 +215,7 @@ impl InterfaceType {
 
         match other{
             Type::Class { span:_, type_args, class } => {
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
 
                 for m in &self.methods{
                     if let Some(method) = class.methods.iter().find(|c|c.name.eq(&c.name)){
@@ -243,7 +243,7 @@ impl InterfaceType {
                 return true;
             }
             Type::Interface { span:_, type_args, interface } => {
-                debug_assert!(type_args.is_empty());
+                debug_assert!(type_args.is_none());
 
                 return interface.as_ref() == self
             }

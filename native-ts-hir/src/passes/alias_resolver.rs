@@ -27,6 +27,12 @@ impl Visitor for AliasResolver {
         {
             let mut resolved_generics = HashMap::new();
 
+            let type_args = if let Some(type_args) = type_args{
+                type_args.as_mut()
+            } else{
+                &mut []
+            };
+
             // number of type arguments must be less then generics
             if type_args.len() > alias.generics.len() {
                 return Err(Error::syntax_error(
@@ -83,13 +89,18 @@ impl Visitor for AliasResolver {
             match &mut base {
                 Type::Class { span:_, type_args, class :_} => {
                     // replace the type arguments
-                    for arg in type_args.iter_mut() {
-                        arg.visit(&mut replacer)?;
+                    if let Some(type_args) = type_args{
+                        for arg in type_args.iter_mut() {
+                            arg.visit(&mut replacer)?;
+                        }
                     }
                 }
                 Type::Function { type_args, func } => {
-                    for arg in type_args.iter_mut() {
-                        arg.visit(&mut replacer)?;
+                    // replace the type arguments
+                    if let Some(type_args) = type_args{
+                        for arg in type_args.iter_mut() {
+                            arg.visit(&mut replacer)?;
+                        }
                     }
                     // the function type must be deep cloned
                     let mut func_ty = func.as_ref().clone();
@@ -107,9 +118,11 @@ impl Visitor for AliasResolver {
                     type_args,
                     interface:_,
                 } => {
-                    // replace type arguments
-                    for arg in type_args.iter_mut() {
-                        arg.visit(&mut replacer)?;
+                    // replace the type arguments
+                    if let Some(type_args) = type_args{
+                        for arg in type_args.iter_mut() {
+                            arg.visit(&mut replacer)?;
+                        }
                     }
                 }
                 _ => return Err(Error::syntax_error(*span, "type expected 0 type arguments")),

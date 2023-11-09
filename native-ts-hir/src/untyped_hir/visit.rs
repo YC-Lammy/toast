@@ -338,9 +338,13 @@ impl Visit for Type {
                 t.visit(visitor)?;
             }
             Self::Function { type_args, func } => {
-                for ty in type_args.iter_mut() {
-                    ty.visit(visitor)?;
+
+                if let Some(type_args) = type_args{
+                    for ty in type_args.iter_mut() {
+                        ty.visit(visitor)?;
+                    }
                 }
+                
                 func.visit(visitor)?;
             }
             Self::Union(u) => {
@@ -349,9 +353,12 @@ impl Visit for Type {
                 }
             }
             Self::Class { span: _, type_args, class } => {
-                for ty in type_args.iter_mut() {
-                    ty.visit(visitor)?;
+                if let Some(type_args) = type_args{
+                    for ty in type_args.iter_mut() {
+                        ty.visit(visitor)?;
+                    }
                 }
+
                 class.visit(visitor)?;
             }
             Self::Interface {
@@ -359,8 +366,10 @@ impl Visit for Type {
                 type_args,
                 interface,
             } => {
-                for ty in type_args.iter_mut() {
-                    ty.visit(visitor)?;
+                if let Some(type_args) = type_args{
+                    for ty in type_args.iter_mut() {
+                        ty.visit(visitor)?;
+                    }
                 }
 
                 interface.visit(visitor)?;
@@ -368,9 +377,12 @@ impl Visit for Type {
             Self::Alias {
                 type_args, alias, ..
             } => {
-                for ty in type_args.iter_mut() {
-                    ty.visit(visitor)?;
+                if let Some(type_args) = type_args{
+                    for ty in type_args.iter_mut() {
+                        ty.visit(visitor)?;
+                    }
                 }
+                
                 alias.base.visit(visitor)?;
             }
         }
