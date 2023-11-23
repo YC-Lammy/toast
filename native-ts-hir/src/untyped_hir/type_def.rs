@@ -17,11 +17,11 @@ pub struct FunctionType {
     pub return_ty: Type,
 }
 
-impl PartialEq for FunctionType{
+impl PartialEq for FunctionType {
     fn eq(&self, other: &Self) -> bool {
         self.this_ty == other.this_ty
-        && self.return_ty == other.return_ty
-        && self.params == other.params
+            && self.return_ty == other.return_ty
+            && self.params == other.params
     }
 }
 
@@ -57,13 +57,13 @@ pub struct ClassType {
     pub static_functions: Vec<ClassMethod>,
 }
 
-impl PartialEq for ClassType{
+impl PartialEq for ClassType {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
-        && self.attributes == other.attributes
-        && self.methods == other.methods
-        && self.static_props == other.static_props
-        && self.static_functions == other.static_functions
+            && self.attributes == other.attributes
+            && self.methods == other.methods
+            && self.static_props == other.static_props
+            && self.static_functions == other.static_functions
     }
 }
 
@@ -80,52 +80,50 @@ impl ClassType {
     }
 }
 
-impl DeepClone for ClassType{
-    fn deep_clone(&self) -> ClassType{
-        let mut new_self = ClassType{
+impl DeepClone for ClassType {
+    fn deep_clone(&self) -> ClassType {
+        let mut new_self = ClassType {
             name: self.name.clone(),
             visit_fingerprint: 0,
             is_definite: true,
             generics: self.generics.deep_clone(),
-            extends: self.extends.as_ref().and_then(|e|Some(e.deep_clone())),
+            extends: self.extends.as_ref().and_then(|e| Some(e.deep_clone())),
             implements: self.implements.deep_clone(),
             attributes: Vec::new(),
             methods: Vec::new(),
             static_functions: Vec::new(),
-            static_props: Vec::new()
+            static_props: Vec::new(),
         };
 
-        for attr in &self.attributes{
-            new_self.attributes.push(
-                Attribute { 
-                    name: attr.name.clone(), 
-                    ty: attr.ty.deep_clone()
-                }
-            )
-        }
-
-        for m in &self.methods{
-            new_self.methods.push(ClassMethod { 
-                name: m.name.clone(), 
-                function: m.function.deep_clone() 
+        for attr in &self.attributes {
+            new_self.attributes.push(Attribute {
+                name: attr.name.clone(),
+                ty: attr.ty.deep_clone(),
             })
         }
 
-        for f in &self.static_functions{
-            new_self.static_functions.push(ClassMethod { 
-                name: f.name.clone(), 
-                function: f.function.deep_clone()
+        for m in &self.methods {
+            new_self.methods.push(ClassMethod {
+                name: m.name.clone(),
+                function: m.function.deep_clone(),
             })
         }
 
-        for p in &self.static_props{
-            new_self.static_props.push(Attribute { 
-                name: p.name.clone(), 
-                ty: p.ty.deep_clone()
+        for f in &self.static_functions {
+            new_self.static_functions.push(ClassMethod {
+                name: f.name.clone(),
+                function: f.function.deep_clone(),
             })
         }
 
-        return new_self
+        for p in &self.static_props {
+            new_self.static_props.push(Attribute {
+                name: p.name.clone(),
+                ty: p.ty.deep_clone(),
+            })
+        }
+
+        return new_self;
     }
 }
 
@@ -149,10 +147,9 @@ pub struct EnumType {
     pub variants: Vec<EnumVariant>,
 }
 
-impl PartialEq for EnumType{
+impl PartialEq for EnumType {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-        && self.variants == other.variants
+        self.name == other.name && self.variants == other.variants
     }
 }
 
@@ -175,24 +172,22 @@ pub struct InterfaceType {
     pub methods: Vec<InterfaceMethod>,
 }
 
-impl PartialEq for InterfaceType{
+impl PartialEq for InterfaceType {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-        && self.props == other.props
-        && self.methods == other.methods
+        self.name == other.name && self.props == other.props && self.methods == other.methods
     }
 }
 
-impl DeepClone for InterfaceType{
+impl DeepClone for InterfaceType {
     fn deep_clone(&self) -> Self {
-        Self { 
-            name: self.name.clone(), 
-            visited_fingerprint: 0, 
-            is_definite: true, 
-            extends: self.extends.deep_clone(), 
-            generics: self.generics.deep_clone(), 
-            props: self.props.deep_clone(), 
-            methods: self.methods.deep_clone() 
+        Self {
+            name: self.name.clone(),
+            visited_fingerprint: 0,
+            is_definite: true,
+            extends: self.extends.deep_clone(),
+            generics: self.generics.deep_clone(),
+            props: self.props.deep_clone(),
+            methods: self.methods.deep_clone(),
         }
     }
 }
@@ -209,47 +204,53 @@ impl InterfaceType {
         return i;
     }
 
-    pub fn check(&self, other: &Type) -> bool{
+    pub fn check(&self, other: &Type) -> bool {
         debug_assert!(self.is_definite);
         debug_assert!(self.generics.is_empty());
 
-        match other{
-            Type::Class { span:_, type_args, class } => {
+        match other {
+            Type::Class {
+                span: _,
+                type_args,
+                class,
+            } => {
                 debug_assert!(type_args.is_none());
 
-                for m in &self.methods{
-                    if let Some(method) = class.methods.iter().find(|c|c.name.eq(&c.name)){
-                        if method.function.ty.as_ref() == m.ty.as_ref(){
+                for m in &self.methods {
+                    if let Some(method) = class.methods.iter().find(|c| c.name.eq(&c.name)) {
+                        if method.function.ty.as_ref() == m.ty.as_ref() {
                             continue;
                         }
                     }
-                    if !m.optional{
-                        return false
+                    if !m.optional {
+                        return false;
                     }
                 }
 
-                for p in &self.props{
-                    if let Some(prop) = class.attributes.iter().find(|a|a.name.eq(&p.name)){
-                        if prop.ty == p.ty{
+                for p in &self.props {
+                    if let Some(prop) = class.attributes.iter().find(|a| a.name.eq(&p.name)) {
+                        if prop.ty == p.ty {
                             continue;
                         }
                     }
 
-                    if !p.optinal{
-                        return false
+                    if !p.optinal {
+                        return false;
                     }
                 }
 
                 return true;
             }
-            Type::Interface { span:_, type_args, interface } => {
+            Type::Interface {
+                span: _,
+                type_args,
+                interface,
+            } => {
                 debug_assert!(type_args.is_none());
 
-                return interface.as_ref() == self
+                return interface.as_ref() == self;
             }
-            _ => {
-                return self.methods.is_empty() && self.props.is_empty()
-            }
+            _ => return self.methods.is_empty() && self.props.is_empty(),
         };
     }
 }
@@ -262,13 +263,13 @@ pub struct InterfaceProperty {
     pub ty: Type,
 }
 
-impl DeepClone for InterfaceProperty{
+impl DeepClone for InterfaceProperty {
     fn deep_clone(&self) -> Self {
-        Self { 
-            name: self.name.clone(), 
-            optinal: self.optinal, 
-            readonly: self.readonly, 
-            ty: self.ty.deep_clone() 
+        Self {
+            name: self.name.clone(),
+            optinal: self.optinal,
+            readonly: self.readonly,
+            ty: self.ty.deep_clone(),
         }
     }
 }
@@ -280,12 +281,12 @@ pub struct InterfaceMethod {
     pub ty: Rc<FunctionType>,
 }
 
-impl DeepClone for InterfaceMethod{
+impl DeepClone for InterfaceMethod {
     fn deep_clone(&self) -> Self {
-        Self { 
-            name: self.name.clone(), 
-            optional: self.optional, 
-            ty: Rc::new(self.ty.deep_clone()) 
+        Self {
+            name: self.name.clone(),
+            optional: self.optional,
+            ty: Rc::new(self.ty.deep_clone()),
         }
     }
 }
@@ -310,13 +311,13 @@ impl Default for AliasType {
     }
 }
 
-impl DeepClone for AliasType{
+impl DeepClone for AliasType {
     fn deep_clone(&self) -> Self {
-        Self { 
-            name: self.name.clone(), 
-            is_definite: true, 
-            generics: self.generics.iter().map(|g|g.deep_clone()).collect(), 
-            base: self.base.deep_clone()
+        Self {
+            name: self.name.clone(),
+            is_definite: true,
+            generics: self.generics.iter().map(|g| g.deep_clone()).collect(),
+            base: self.base.deep_clone(),
         }
     }
 }

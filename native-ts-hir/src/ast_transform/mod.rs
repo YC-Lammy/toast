@@ -14,6 +14,7 @@ use native_js_common::error::Error;
 use crate::VarKind;
 
 use crate::context::Context;
+use crate::untyped_hir::visit::Visit;
 use crate::untyped_hir::Type;
 
 type Result<T> = core::result::Result<T, Error<Span>>;
@@ -23,8 +24,10 @@ pub struct Translater {
 }
 
 impl Translater {
-    pub fn new() -> Self{
-        Self { context: Context::new() }
+    pub fn new() -> Self {
+        Self {
+            context: Context::new(),
+        }
     }
 
     pub fn hoist<'a, I: Iterator<Item = &'a swc::Stmt> + Clone>(&mut self, stmts: I) -> Result<()> {
@@ -314,29 +317,35 @@ impl Translater {
     }
 }
 
-
 #[test]
-fn translate(){
-    let s = include_str!("../test.ts");
+fn translate() {
+    let s = include_str!("../../binary.ts");
 
     let parser = native_ts_parser::Parser::new();
 
-    let program = parser.parse_str("main".to_string(), s.to_string()).expect("error parsing source");
+    let program = parser
+        .parse_str("main".to_string(), s.to_string())
+        .expect("error parsing source");
 
-    for (_, module) in &program.modules{
+    for (_, module) in &program.modules {
         let mut t = Translater::new();
 
-        let re = t.hoist(module.module.body.iter().filter_map(|i|i.as_stmt()));
+        let re = t.hoist(module.module.body.iter().filter_map(|i| i.as_stmt()));
 
-        for i in &module.module.body{
-            if let Some(s) = i.as_stmt(){
+        for i in &module.module.body {
+            if let Some(s) = i.as_stmt() {
                 let re = t.translate_stmt(s, None);
                 println!("{:#?}", re);
             }
         }
-        
-        println!("{:#?}", t.context.end_function());
 
-        println!("{:#?}", re);
+        let mut main = t.context.end_function();
+
+        println!("{:#?}", main);
+
+        let mut visitor = crate::passes::unknown::UnknownFinder::default();
+        main.visit(&mut visitor).expect("");
+
+        main.visit(&mut visitor.resolver()).expect("");
     }
 }

@@ -159,10 +159,10 @@ impl Translater {
                 }
                 swc::TsUnionOrIntersectionType::TsUnionType(u) => {
                     let mut v = Vec::new();
-                    for t in &u.types{
+                    for t in &u.types {
                         v.push(self.translate_ty(t)?);
                     }
-                    return Ok(Type::Union(v))
+                    return Ok(Type::Union(v));
                 }
             },
         }
@@ -326,9 +326,9 @@ impl Translater {
 
                 return Ok(Type::Class {
                     span: sp,
-                    type_args: if ty_args.is_empty(){
+                    type_args: if ty_args.is_empty() {
                         None
-                    } else{
+                    } else {
                         Some(ty_args.into_boxed_slice())
                     },
                     class: c.clone(),
@@ -380,9 +380,9 @@ impl Translater {
 
                 return Ok(Type::Interface {
                     span: sp,
-                    type_args: if ty_args.is_empty(){
+                    type_args: if ty_args.is_empty() {
                         None
-                    } else{
+                    } else {
                         Some(ty_args.into_boxed_slice())
                     },
                     interface: i.clone(),
@@ -416,9 +416,9 @@ impl Translater {
 
                 return Ok(Type::Alias {
                     span: sp,
-                    type_args: if ty_args.is_empty(){
+                    type_args: if ty_args.is_empty() {
                         None
-                    } else{
+                    } else {
                         Some(ty_args.into_boxed_slice())
                     },
                     alias: a.clone(),

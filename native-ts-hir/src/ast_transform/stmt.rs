@@ -4,11 +4,8 @@ use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
 use crate::context::Binding;
-use crate::{VarId, VarKind,};
-use crate::untyped_hir::{
-    self as uhir, ClassType, EnumType, InterfaceMethod, InterfaceType, Type,
-};
-
+use crate::untyped_hir::{self as uhir, ClassType, EnumType, InterfaceMethod, InterfaceType, Type};
+use crate::{VarId, VarKind};
 
 use super::{Result, Translater};
 
@@ -84,13 +81,11 @@ impl Translater {
             swc::Stmt::Empty(_) => {}
             swc::Stmt::Expr(e) => {
                 let expr = self.translate_expr(&e.expr)?;
-                
-                self.context.function().stmts.push(
-                    uhir::Stmt::Expr { 
-                        span: e.span, 
-                        expr: expr 
-                    }
-                );
+
+                self.context.function().stmts.push(uhir::Stmt::Expr {
+                    span: e.span,
+                    expr: expr,
+                });
             }
             swc::Stmt::For(f) => return self.translate_for_loop(f, label),
             swc::Stmt::ForIn(f) => return self.translate_for_in_loop(f, label),
@@ -235,12 +230,10 @@ impl Translater {
                     let span = e.span();
                     let expr = self.translate_expr(&e)?;
 
-                    self.context.function().stmts.push(
-                        uhir::Stmt::Expr { 
-                            span: span, 
-                            expr: expr
-                        }
-                    );
+                    self.context.function().stmts.push(uhir::Stmt::Expr {
+                        span: span,
+                        expr: expr,
+                    });
                 }
                 // declared with var, let or const
                 swc::VarDeclOrExpr::VarDecl(d) => {
@@ -506,7 +499,7 @@ impl Translater {
             Type::unknown(id.span)
         };
 
-        match kind{
+        match kind {
             VarKind::AwaitUsing => self.context.add_await_using(&id.id.sym, ty.clone()),
             VarKind::Using => self.context.add_using(&id.id.sym, ty.clone()),
             VarKind::Const => self.context.add_const(&id.id.sym, ty.clone()),
@@ -989,7 +982,6 @@ impl Translater {
             | Binding::Const { id, ty }
             | Binding::Let { id, ty }
             | Binding::Var { id, ty } => {
-
                 self.context.function().stmts.push(uhir::Stmt::Declare {
                     span: span,
                     kind: kind,

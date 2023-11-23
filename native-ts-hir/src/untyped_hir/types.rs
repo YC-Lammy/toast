@@ -6,7 +6,7 @@ use native_js_common::rc::Rc;
 
 use crate::PropName;
 
-use super::{AliasType, ClassType, EnumType, FunctionType, InterfaceType, DeepClone};
+use super::{AliasType, ClassType, DeepClone, EnumType, FunctionType, InterfaceType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnknownId(usize);
@@ -164,10 +164,7 @@ impl Type {
 
             Self::Alias { alias, .. } => alias.base.is_unknown(),
 
-            Self::Map(t)
-            | Self::Array(t)
-            | Self::Iterator(t)
-            | Self::Promise(t) => t.is_unknown(),
+            Self::Map(t) | Self::Array(t) | Self::Iterator(t) | Self::Promise(t) => t.is_unknown(),
             Self::Union(u) => {
                 for t in u {
                     if t.is_unknown() {
@@ -254,51 +251,67 @@ impl Type {
     }
 }
 
-impl DeepClone for Type{
-    fn deep_clone(&self) -> Self{
-        match self{
-            Self::Alias { span, type_args, alias } => {
-                Self::Alias { 
-                    span: *span, 
-                    type_args: type_args.deep_clone(), 
-                    alias: Rc::new(alias.deep_clone()) 
-                }
-            }
+impl DeepClone for Type {
+    fn deep_clone(&self) -> Self {
+        match self {
+            Self::Alias {
+                span,
+                type_args,
+                alias,
+            } => Self::Alias {
+                span: *span,
+                type_args: type_args.deep_clone(),
+                alias: Rc::new(alias.deep_clone()),
+            },
             Self::Array(elem) => Self::Array(elem.deep_clone().into()),
-            Self::Class { span, type_args, class } => {
-                Self::Class { span: *span, type_args: type_args.deep_clone(), class: Rc::new(class.deep_clone()) }
-            }
-            Self::Enum(e) => {
-                Self::Enum(e.clone())
-            }
-            Self::Function { type_args, func } => {
-                Self::Function { type_args: type_args.deep_clone(), func: Rc::new(func.deep_clone()) }
-            }
-            Self::Interface { span, type_args, interface } => {
-                Self::Interface { span: *span, type_args: type_args.deep_clone(), interface: Rc::new(interface.deep_clone()) }
-            }
+            Self::Class {
+                span,
+                type_args,
+                class,
+            } => Self::Class {
+                span: *span,
+                type_args: type_args.deep_clone(),
+                class: Rc::new(class.deep_clone()),
+            },
+            Self::Enum(e) => Self::Enum(e.clone()),
+            Self::Function { type_args, func } => Self::Function {
+                type_args: type_args.deep_clone(),
+                func: Rc::new(func.deep_clone()),
+            },
+            Self::Interface {
+                span,
+                type_args,
+                interface,
+            } => Self::Interface {
+                span: *span,
+                type_args: type_args.deep_clone(),
+                interface: Rc::new(interface.deep_clone()),
+            },
             Self::Iterator(t) => Self::Iterator(t.deep_clone().into()),
             Self::Map(t) => Self::Map(t.deep_clone().into()),
             Self::Promise(p) => Self::Promise(p.deep_clone().into()),
             Self::Union(u) => Self::Union(u.deep_clone()),
-            ty => ty.clone()
+            ty => ty.clone(),
         }
     }
 }
 
-
-impl core::fmt::Display for Type{
+impl core::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self{
-            Self::Alias { span, type_args, alias } => {
+        match self {
+            Self::Alias {
+                span,
+                type_args,
+                alias,
+            } => {
                 f.write_str(&alias.name)?;
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     f.write_str("<")?;
 
-                    for (i, t) in type_args.iter().enumerate(){
+                    for (i, t) in type_args.iter().enumerate() {
                         t.fmt(f)?;
 
-                        if i == type_args.len() - 1{
+                        if i == type_args.len() - 1 {
                             break;
                         }
 
@@ -319,15 +332,19 @@ impl core::fmt::Display for Type{
             Self::Bool => {
                 f.write_str("boolean")?;
             }
-            Self::Class { span, type_args, class } => {
+            Self::Class {
+                span,
+                type_args,
+                class,
+            } => {
                 f.write_str(&class.name)?;
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     f.write_str("<")?;
 
-                    for (i, t) in type_args.iter().enumerate(){
+                    for (i, t) in type_args.iter().enumerate() {
                         t.fmt(f)?;
 
-                        if i == type_args.len() - 1{
+                        if i == type_args.len() - 1 {
                             break;
                         }
 
@@ -339,12 +356,12 @@ impl core::fmt::Display for Type{
             }
             Self::Enum(e) => {
                 f.write_str(&e.name)?;
-            } 
+            }
             Self::Function { type_args, func } => {
                 f.write_str("(this:");
                 func.this_ty.fmt(f)?;
 
-                for p in &func.params{
+                for p in &func.params {
                     f.write_str(",")?;
                     p.fmt(f)?;
                 }
@@ -359,15 +376,19 @@ impl core::fmt::Display for Type{
             Self::Int => {
                 f.write_str("number")?;
             }
-            Self::Interface { span, type_args, interface } => {
+            Self::Interface {
+                span,
+                type_args,
+                interface,
+            } => {
                 f.write_str(&interface.name)?;
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     f.write_str("<")?;
 
-                    for (i, t) in type_args.iter().enumerate(){
+                    for (i, t) in type_args.iter().enumerate() {
                         t.fmt(f)?;
 
-                        if i == type_args.len() - 1{
+                        if i == type_args.len() - 1 {
                             break;
                         }
 
@@ -418,26 +439,26 @@ impl core::fmt::Display for Type{
                 f.write_str("undefined")?;
             }
             Self::Union(u) => {
-                for (i, t) in u.iter().enumerate(){
+                for (i, t) in u.iter().enumerate() {
                     t.fmt(f)?;
 
-                    if i == u.len() -1{
+                    if i == u.len() - 1 {
                         break;
                     }
                     f.write_str("|")?;
-                };
+                }
             }
             Self::Unknown { .. } => {
                 f.write_str("unknown")?;
             }
         }
 
-        return Ok(())
+        return Ok(());
     }
 }
 
-impl Type{
-    pub fn has_property(&self, prop: &PropName) -> bool{
+impl Type {
+    pub fn has_property(&self, prop: &PropName) -> bool {
         false
     }
 }

@@ -1,10 +1,9 @@
-
 use native_js_common::rc::Rc;
 use swc_common::Span;
 
 use crate::{VarId, VarKind};
 
-use super::{expr::Expr, ClassType, Function, Type, DeepClone};
+use super::{expr::Expr, ClassType, DeepClone, Function, Type};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Stmt<TY = Type, CL = ClassType, F = Function> {
@@ -78,7 +77,7 @@ pub enum Stmt<TY = Type, CL = ClassType, F = Function> {
     EndSwitch,
     /// try
     Try {
-        span: Span
+        span: Span,
     },
     EndTry,
     Catch {
@@ -95,29 +94,35 @@ pub enum Stmt<TY = Type, CL = ClassType, F = Function> {
     /// an expr stmt
     Expr {
         span: Span,
-        expr: Expr<TY, F>
+        expr: Expr<TY, F>,
     },
 }
 
-
-impl<TY, CL, F> DeepClone for Stmt<TY, CL, F> where TY:DeepClone, CL:DeepClone, F:DeepClone{
+impl<TY, CL, F> DeepClone for Stmt<TY, CL, F>
+where
+    TY: DeepClone,
+    CL: DeepClone,
+    F: DeepClone,
+{
     fn deep_clone(&self) -> Self {
-        match self{
-            Self::Expr { span, expr } => Self::Expr { span: span.clone(), expr: expr.deep_clone() },
-            Self::Catch { span, catch_binding, catch_binding_ty, catch_binding_name } => {
-                Self::Catch { 
-                    span: span.clone(), 
-                    catch_binding: *catch_binding, 
-                    catch_binding_ty: catch_binding_ty.deep_clone(), 
-                    catch_binding_name: catch_binding_name.clone() 
-                }
-            }
-            Self::Try { span } => {
-                Self::Try { 
-                    span: span.clone()
-                }
-            }
-            _ => todo!()
+        match self {
+            Self::Expr { span, expr } => Self::Expr {
+                span: span.clone(),
+                expr: expr.deep_clone(),
+            },
+            Self::Catch {
+                span,
+                catch_binding,
+                catch_binding_ty,
+                catch_binding_name,
+            } => Self::Catch {
+                span: span.clone(),
+                catch_binding: *catch_binding,
+                catch_binding_ty: catch_binding_ty.deep_clone(),
+                catch_binding_name: catch_binding_name.clone(),
+            },
+            Self::Try { span } => Self::Try { span: span.clone() },
+            _ => todo!(),
         }
     }
 }

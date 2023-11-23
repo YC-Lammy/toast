@@ -14,36 +14,36 @@ pub use types::*;
 
 use crate::VarId;
 
-pub trait DeepClone: Clone{
+pub trait DeepClone: Clone {
     fn deep_clone(&self) -> Self;
 }
 
-impl<T:DeepClone> DeepClone for Vec<T>{
+impl<T: DeepClone> DeepClone for Vec<T> {
     fn deep_clone(&self) -> Self {
         let mut new_vec = Vec::with_capacity(self.len());
 
-        for i in self{
+        for i in self {
             new_vec.push(i.deep_clone());
-        };
-        return new_vec
+        }
+        return new_vec;
     }
 }
 
-impl<T:DeepClone> DeepClone for Box<[T]>{
+impl<T: DeepClone> DeepClone for Box<[T]> {
     fn deep_clone(&self) -> Self {
         let mut v = Vec::with_capacity(self.len());
-        for i in self.iter(){
+        for i in self.iter() {
             v.push(i.deep_clone());
         }
         v.into_boxed_slice()
     }
 }
 
-impl<T:DeepClone> DeepClone for Option<T>{
+impl<T: DeepClone> DeepClone for Option<T> {
     fn deep_clone(&self) -> Self {
-        match self{
+        match self {
             Some(v) => Some(v.deep_clone()),
-            None => None
+            None => None,
         }
     }
 }
@@ -57,38 +57,38 @@ pub struct GenericParam {
     pub default: Option<Type>,
 }
 
-impl DeepClone for GenericParam{
+impl DeepClone for GenericParam {
     fn deep_clone(&self) -> Self {
-        Self { 
-            name: self.name.clone(), 
+        Self {
+            name: self.name.clone(),
             span: self.span,
-            id: self.id, 
-            constrain: self.constrain.as_ref().and_then(|c|Some(c.deep_clone())), 
-            default: self.constrain.as_ref().and_then(|d|Some(d.deep_clone()))
+            id: self.id,
+            constrain: self.constrain.as_ref().and_then(|c| Some(c.deep_clone())),
+            default: self.constrain.as_ref().and_then(|d| Some(d.deep_clone())),
         }
     }
 }
 
-impl FunctionType{
-    pub fn deep_clone(&self) -> Self{
-        let mut new_self = FunctionType{
+impl FunctionType {
+    pub fn deep_clone(&self) -> Self {
+        let mut new_self = FunctionType {
             visit_fingerprint: 0,
             is_definite: true,
             this_ty: self.this_ty.deep_clone(),
             generics: Vec::new(),
             params: Vec::new(),
-            return_ty: self.return_ty.deep_clone()
+            return_ty: self.return_ty.deep_clone(),
         };
 
-        for g in &self.generics{
+        for g in &self.generics {
             new_self.generics.push(g.deep_clone());
         }
 
-        for p in &self.params{
+        for p in &self.params {
             new_self.params.push(p.deep_clone());
         }
 
-        return new_self
+        return new_self;
     }
 }
 
@@ -108,15 +108,15 @@ pub struct Function {
     pub stmts: Vec<Stmt>,
 }
 
-impl PartialEq for Function{
+impl PartialEq for Function {
     fn eq(&self, other: &Self) -> bool {
         self.is_arrow == other.is_arrow
-        && self.is_async == other.is_async
-        && self.is_generator == other.is_generator
-        && self.ty == other.ty
-        && self.variables == other.variables
-        && self.params == other.params
-        && self.stmts == other.stmts
+            && self.is_async == other.is_async
+            && self.is_generator == other.is_generator
+            && self.ty == other.ty
+            && self.variables == other.variables
+            && self.params == other.params
+            && self.stmts == other.stmts
     }
 }
 
@@ -146,9 +146,9 @@ impl Default for Function {
     }
 }
 
-impl DeepClone for Function{
-    fn deep_clone(&self) -> Function{
-        let mut new_self = Function{
+impl DeepClone for Function {
+    fn deep_clone(&self) -> Function {
+        let mut new_self = Function {
             name: self.name.clone(),
             visitor_fingerprint: 0,
             is_definite: true,
@@ -158,13 +158,13 @@ impl DeepClone for Function{
             ty: Rc::new(self.ty.deep_clone()),
             variables: self.variables.clone(),
             params: self.params.clone(),
-            stmts: Vec::new()
+            stmts: Vec::new(),
         };
 
-        for s in &self.stmts{
+        for s in &self.stmts {
             new_self.stmts.push(s.deep_clone());
-        };
+        }
 
-        return new_self
-    } 
+        return new_self;
+    }
 }

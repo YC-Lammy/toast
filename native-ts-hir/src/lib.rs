@@ -1,7 +1,10 @@
 pub mod typed_hir;
 pub mod untyped_hir;
 
+mod ast;
+mod common;
 mod context;
+pub mod transform;
 
 pub mod ast_transform;
 pub mod passes;
@@ -52,9 +55,9 @@ pub enum PropName {
     Symbol(Symbol),
 }
 
-impl core::fmt::Display for PropName{
+impl core::fmt::Display for PropName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self{
+        match self {
             Self::Ident(id) => f.write_str(&id),
             Self::String(s) => {
                 f.write_str("\"")?;
@@ -69,9 +72,7 @@ impl core::fmt::Display for PropName{
                 f.write_str("#")?;
                 f.write_str(p)
             }
-            Self::Symbol(s) => {
-                s.fmt(f)
-            }
+            Self::Symbol(s) => s.fmt(f),
         }
     }
 }
@@ -95,11 +96,11 @@ pub enum Symbol {
     Unscopables,
 }
 
-impl core::fmt::Display for Symbol{
+impl core::fmt::Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Symbol.")?;
 
-        f.write_str(match self{
+        f.write_str(match self {
             Self::AsyncDispose => "asyncDispose",
             Self::AsyncIterator => "asyncIterator",
             Self::Dispose => "dispose",
@@ -114,7 +115,7 @@ impl core::fmt::Display for Symbol{
             Self::Split => "split",
             Self::ToPrimitive => "toPrimitive",
             Self::ToStringTag => "toStringTag",
-            Self::Unscopables => "unscopables"
+            Self::Unscopables => "unscopables",
         })
     }
 }

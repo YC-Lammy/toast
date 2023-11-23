@@ -53,120 +53,113 @@ impl Translater {
             }
             swc::Expr::Ident(id) => return self.translate_ident(id),
             swc::Expr::Invalid(i) => return Err(Error::syntax_error(i.span, "invalid expression")),
-            swc::Expr::Lit(l) => {
-                return self.translate_litral_expr(l)
-            }
+            swc::Expr::Lit(l) => return self.translate_litral_expr(l),
             swc::Expr::Member(m) => return self.translate_member(m, false),
             swc::Expr::MetaProp(m) => {
-                return Ok(match m.kind{
+                return Ok(match m.kind {
                     swc::MetaPropKind::ImportMeta => uhir::Expr::ImportMeta,
-                    swc::MetaPropKind::NewTarget => uhir::Expr::NewTarget
+                    swc::MetaPropKind::NewTarget => uhir::Expr::NewTarget,
                 });
             }
             swc::Expr::New(n) => return self.translate_new_expr(n),
             swc::Expr::Object(o) => {
-                return Err(Error::syntax_error(o.span, "object literal not allowed. use classes instead"))
+                return Err(Error::syntax_error(
+                    o.span,
+                    "object literal not allowed. use classes instead",
+                ))
             }
-            swc::Expr::OptChain(o) => {
-                return self.translae_optchain(o)
-            }
+            swc::Expr::OptChain(o) => return self.translae_optchain(o),
             swc::Expr::Paren(p) => return self.translate_expr(&p.expr),
             swc::Expr::PrivateName(p) => {
                 return Err(Error::syntax_error(p.span, "invalid expression"))
             }
             swc::Expr::Seq(s) => {
                 let mut seq = Vec::new();
-                for e in &s.exprs{
+                for e in &s.exprs {
                     seq.push(self.translate_expr(&e)?);
                 }
-                return Ok(uhir::Expr::Seq { 
-                    span: s.span, 
-                    exprs: seq
-                })
+                return Ok(uhir::Expr::Seq {
+                    span: s.span,
+                    exprs: seq,
+                });
             }
             swc::Expr::SuperProp(s) => {
-                return Err(Error::syntax_error(s.span, "super property not supported, use 'this' instead"))
+                return Err(Error::syntax_error(
+                    s.span,
+                    "super property not supported, use 'this' instead",
+                ))
             }
-            swc::Expr::This(t) => {
-                return Ok(uhir::Expr::This(t.span))
-            }
-            swc::Expr::TaggedTpl(t) => {
-                return Err(Error::syntax_error(t.span, "not supported"))
-            }
-            swc::Expr::Tpl(t) => {
-                return Err(Error::syntax_error(t.span, "template not supported"))
-            }
+            swc::Expr::This(t) => return Ok(uhir::Expr::This(t.span)),
+            swc::Expr::TaggedTpl(t) => return Err(Error::syntax_error(t.span, "not supported")),
+            swc::Expr::Tpl(t) => return Err(Error::syntax_error(t.span, "template not supported")),
             swc::Expr::TsAs(t) => {
                 let value = self.translate_expr(&t.expr)?;
                 let ty = self.translate_ty(&t.type_ann)?;
 
-                return Ok(uhir::Expr::Cast { 
-                    span: t.span, 
-                    value: value.into(), 
-                    to_ty: ty 
-                })
+                return Ok(uhir::Expr::Cast {
+                    span: t.span,
+                    value: value.into(),
+                    to_ty: ty,
+                });
             }
             swc::Expr::TsConstAssertion(c) => {
                 return Err(Error::syntax_error(c.span, "not supported"))
             }
-            swc::Expr::TsNonNull(n) => {
-                return Err(Error::syntax_error(n.span, "not supported"))
-            }
-            swc::Expr::TsSatisfies(s) => {
-                return Err(Error::syntax_error(s.span, "not supported"))
-            }
+            swc::Expr::TsNonNull(n) => return Err(Error::syntax_error(n.span, "not supported")),
+            swc::Expr::TsSatisfies(s) => return Err(Error::syntax_error(s.span, "not supported")),
             swc::Expr::TsTypeAssertion(t) => {
                 return Err(Error::syntax_error(t.span, "type assertion not supported"))
             }
-            swc::Expr::TsInstantiation(i) => {
-                return self.translate_ts_instantiation(i)
-            }
+            swc::Expr::TsInstantiation(i) => return self.translate_ts_instantiation(i),
             swc::Expr::Unary(u) => {
                 let arg = self.translate_expr(&u.arg)?;
                 let op = u.op.into();
 
-                return Ok(uhir::Expr::UnaryOp { 
-                    span: u.span, 
-                    op: op, 
-                    value: arg.into()
-                })
+                return Ok(uhir::Expr::UnaryOp {
+                    span: u.span,
+                    op: op,
+                    value: arg.into(),
+                });
             }
             swc::Expr::Update(u) => {
                 // an update operation can only update member or variable
                 let left = self.translate_member_or_var(&u.arg)?;
 
-                let op =
-                match u.op{
-                    swc::UpdateOp::MinusMinus => if u.prefix{
-                        uhir::UpdateOp::PrefixSub
-                    } else{
-                        uhir::UpdateOp::SuffixSub
+                let op = match u.op {
+                    swc::UpdateOp::MinusMinus => {
+                        if u.prefix {
+                            uhir::UpdateOp::PrefixSub
+                        } else {
+                            uhir::UpdateOp::SuffixSub
+                        }
                     }
-                    swc::UpdateOp::PlusPlus => if u.prefix{
-                        uhir::UpdateOp::PrefixAdd
-                    } else{
-                        uhir::UpdateOp::SuffixAdd
+                    swc::UpdateOp::PlusPlus => {
+                        if u.prefix {
+                            uhir::UpdateOp::PrefixAdd
+                        } else {
+                            uhir::UpdateOp::SuffixAdd
+                        }
                     }
                 };
 
-                return Ok(uhir::Expr::Update { 
-                    span: u.span, 
-                    target: left, 
-                    op: op
+                return Ok(uhir::Expr::Update {
+                    span: u.span,
+                    target: left,
+                    op: op,
                 });
             }
             swc::Expr::Yield(y) => {
-                let value = if let Some(arg) = &y.arg{
+                let value = if let Some(arg) = &y.arg {
                     self.translate_expr(arg)?
-                } else{
+                } else {
                     uhir::Expr::Undefined
                 };
 
-                return Ok(uhir::Expr::Yield { 
-                    span: y.span, 
-                    delegate: y.delegate, 
-                    value: value.into()
-                })
+                return Ok(uhir::Expr::Yield {
+                    span: y.span,
+                    delegate: y.delegate,
+                    value: value.into(),
+                });
             }
 
             swc::Expr::JSXElement(_)
@@ -179,28 +172,29 @@ impl Translater {
         };
     }
 
-    pub fn translate_litral_expr(&mut self, lit: &swc::Lit) -> Result<uhir::Expr>{
-        match lit{
+    pub fn translate_litral_expr(&mut self, lit: &swc::Lit) -> Result<uhir::Expr> {
+        match lit {
             swc::Lit::BigInt(b) => {
-                return Ok(uhir::Expr::BigInt(b.value.to_i128().expect("i128 overflow")))
+                return Ok(uhir::Expr::BigInt(
+                    b.value.to_i128().expect("i128 overflow"),
+                ))
             }
             swc::Lit::Bool(b) => Ok(uhir::Expr::Bool(b.value)),
             swc::Lit::Null(_) => Ok(uhir::Expr::Null),
             swc::Lit::Num(n) => {
-                if n.value as i32 as f64 == n.value{
-                    return Ok(uhir::Expr::Integer(n.value as i32))
+                if n.value as i32 as f64 == n.value {
+                    return Ok(uhir::Expr::Integer(n.value as i32));
                 }
-                return Ok(uhir::Expr::Number(n.value))
+                return Ok(uhir::Expr::Number(n.value));
             }
             swc::Lit::Regex(r) => {
-                return Ok(uhir::Expr::Regex { reg: r.exp.to_string(), flags: r.flags.to_string() })
+                return Ok(uhir::Expr::Regex {
+                    reg: r.exp.to_string(),
+                    flags: r.flags.to_string(),
+                })
             }
-            swc::Lit::Str(s) => {
-                return Ok(uhir::Expr::String(s.value.to_string()))
-            }
-            swc::Lit::JSXText(j) => {
-                return Err(Error::syntax_error(j.span, "JSX not supported"))
-            }
+            swc::Lit::Str(s) => return Ok(uhir::Expr::String(s.value.to_string())),
+            swc::Lit::JSXText(j) => return Err(Error::syntax_error(j.span, "JSX not supported")),
         }
     }
 
@@ -225,7 +219,7 @@ impl Translater {
     }
 
     pub fn translate_assign(&mut self, a: &swc::AssignExpr) -> Result<uhir::Expr> {
-        let right = self.translate_expr(&a.right)?;
+        let mut right = self.translate_expr(&a.right)?;
 
         let left = if let swc::PatOrExpr::Pat(p) = &a.left {
             if a.op != swc::AssignOp::Assign && !p.is_ident() {
@@ -271,8 +265,8 @@ impl Translater {
         };
 
         return Ok(uhir::Expr::Assign {
-            span: a.span,
             assign_op: a.op.into(),
+            span: a.span,
             target: left,
             value: right.into(),
         });
@@ -337,13 +331,13 @@ impl Translater {
                 }
             }
             swc::BinaryOp::InstanceOf => {
-               let ty = self.translate_type_expr(&b.left, vec![])?;
+                let ty = self.translate_type_expr(&b.left, vec![])?;
 
-               return Ok(uhir::Expr::InstanceOf { 
-                    span: b.span, 
-                    value: right.into(), 
-                    ty: ty 
-                })
+                return Ok(uhir::Expr::InstanceOf {
+                    span: b.span,
+                    value: right.into(),
+                    ty: ty,
+                });
             }
             _ => {}
         }
@@ -416,7 +410,7 @@ impl Translater {
                 }
 
                 // fallback to dynamic call
-                return Ok(uhir::Callee::Expr(self.translate_expr(&e)?.into()))
+                return Ok(uhir::Callee::Expr(self.translate_expr(&e)?.into()));
             }
         }
     }
@@ -506,58 +500,65 @@ impl Translater {
     }
 
     pub fn translate_ident(&mut self, ident: &swc::Ident) -> Result<uhir::Expr> {
-        match self.context.find(&ident.sym){
+        match self.context.find(&ident.sym) {
             Some(Binding::AwaitUsing { id, ty })
             | Some(Binding::Using { id, ty })
             | Some(Binding::Const { id, ty })
             | Some(Binding::Let { id, ty })
             | Some(Binding::Var { id, ty }) => {
-                return Ok(uhir::Expr::ReadVar { 
-                    span: ident.span, 
-                    name: ident.sym.to_string(), 
-                    id: *id, 
-                    ty: ty.clone()
+                return Ok(uhir::Expr::ReadVar {
+                    span: ident.span,
+                    name: ident.sym.to_string(),
+                    id: *id,
+                    ty: ty.clone(),
                 })
-            },
+            }
             _ => {
-                return Err(Error::syntax_error(ident.span, format!("invalid expression, identifier '{}' is not a variable", ident.sym)))
+                return Err(Error::syntax_error(
+                    ident.span,
+                    format!(
+                        "invalid expression, identifier '{}' is not a variable",
+                        ident.sym
+                    ),
+                ))
             }
         }
     }
 
     // returns am member, class member or a variable
-    pub fn translate_member_or_var(&mut self, expr: &swc::Expr) -> Result<uhir::MemberOrVar<uhir::Type, uhir::Function>>{
-        match expr{
-            swc::Expr::Ident(ident) => {
-                match self.context.find(&ident.sym){
-                    Some(Binding::Let { id, ty })
-                    | Some(Binding::Var { id, ty }) => {
-                        return Ok(uhir::MemberOrVar::Var { 
-                            span: ident.span, 
-                            name: ident.sym.to_string(), 
-                            id: *id, 
-                            ty: ty.clone() 
-                        })
-                    },
-                    Some(Binding::AwaitUsing { .. })
-                    | Some(Binding::Using{..})
-                    | Some(Binding::Const{..}) => {
-                        return Err(Error::syntax_error(ident.span, "cannot assign to constant variables"))
-                    }
-                    _ => {
-                        return Err(Error::syntax_error(ident.span, "invalid left-hand side assignment"))
-                    }
+    pub fn translate_member_or_var(
+        &mut self,
+        expr: &swc::Expr,
+    ) -> Result<uhir::MemberOrVar<uhir::Type, uhir::Function>> {
+        match expr {
+            swc::Expr::Ident(ident) => match self.context.find(&ident.sym) {
+                Some(Binding::Let { id, ty }) | Some(Binding::Var { id, ty }) => {
+                    return Ok(uhir::MemberOrVar::Var {
+                        span: ident.span,
+                        name: ident.sym.to_string(),
+                        id: *id,
+                        ty: ty.clone(),
+                    })
                 }
-            }
+                Some(Binding::AwaitUsing { .. })
+                | Some(Binding::Using { .. })
+                | Some(Binding::Const { .. }) => {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        "cannot assign to constant variables",
+                    ))
+                }
+                _ => {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        "invalid left-hand side assignment",
+                    ))
+                }
+            },
             swc::Expr::Member(member) => {
-                let propname =
-                match &member.prop{
-                    swc::MemberProp::Computed(c) => {
-                        self.translate_computed_prop_name(&c.expr)?
-                    }
-                    swc::MemberProp::Ident(id) => {
-                        uhir::PropName::Ident(id.sym.to_string())
-                    }
+                let propname = match &member.prop {
+                    swc::MemberProp::Computed(c) => self.translate_computed_prop_name(&c.expr)?,
+                    swc::MemberProp::Ident(id) => uhir::PropName::Ident(id.sym.to_string()),
                     swc::MemberProp::PrivateName(p) => {
                         uhir::PropName::Private(p.id.sym.to_string())
                     }
@@ -566,124 +567,132 @@ impl Translater {
                 let obj = self.translate_expr(&member.obj);
 
                 // failed to translate expression, expression may be a type
-                if obj.is_err(){
+                if obj.is_err() {
                     // try to translate as a type
                     let ty = self.translate_type_expr(&member.obj, Vec::new());
 
                     // it is not a type
-                    if ty.is_err(){
+                    if ty.is_err() {
                         // return the original error
-                        return Err(obj.err().unwrap())
+                        return Err(obj.err().unwrap());
                     }
 
                     // it is a type member
-                    return Ok(uhir::MemberOrVar::ClassMember { 
-                        span: member.span, 
-                        class: ty.ok().unwrap(), 
+                    return Ok(uhir::MemberOrVar::ClassMember {
+                        span: member.span,
+                        class: ty.ok().unwrap(),
                         prop: propname,
-                    })
+                    });
                 };
 
                 let obj = obj?;
 
                 // return a normal member expression
-                return Ok(uhir::MemberOrVar::Member { 
-                    span: member.span, 
-                    obj: Box::new(obj), 
+                return Ok(uhir::MemberOrVar::Member {
+                    span: member.span,
+                    obj: Box::new(obj),
                     prop: propname,
-                })
-            },
-            _ => return Err(Error::syntax_error(expr.span(), "invalid left-hand side assignment"))
+                });
+            }
+            _ => {
+                return Err(Error::syntax_error(
+                    expr.span(),
+                    "invalid left-hand side assignment",
+                ))
+            }
         }
     }
 
-    pub fn translate_member(&mut self, member: &swc::MemberExpr, is_optchain: bool) -> Result<uhir::Expr> {
-        let propname =
-        match &member.prop{
-            swc::MemberProp::Computed(c) => {
-                self.translate_computed_prop_name(&c.expr)?
-            }
-            swc::MemberProp::Ident(id) => {
-                uhir::PropName::Ident(id.sym.to_string())
-            }
-            swc::MemberProp::PrivateName(p) => {
-                uhir::PropName::Private(p.id.sym.to_string())
-            }
+    pub fn translate_member(
+        &mut self,
+        member: &swc::MemberExpr,
+        is_optchain: bool,
+    ) -> Result<uhir::Expr> {
+        let propname = match &member.prop {
+            swc::MemberProp::Computed(c) => self.translate_computed_prop_name(&c.expr)?,
+            swc::MemberProp::Ident(id) => uhir::PropName::Ident(id.sym.to_string()),
+            swc::MemberProp::PrivateName(p) => uhir::PropName::Private(p.id.sym.to_string()),
         };
         let obj = self.translate_expr(&member.obj);
 
         // failed to translate expression, expression may be a type
-        if obj.is_err(){
+        if obj.is_err() {
             // try to translate as a type
             let ty = self.translate_type_expr(&member.obj, Vec::new());
 
             // it is not a type
-            if ty.is_err(){
+            if ty.is_err() {
                 // return the original error
-                return Err(obj.err().unwrap())
+                return Err(obj.err().unwrap());
             }
 
             // it is a type member
-            return Ok(uhir::Expr::ClassMember { 
-                span: member.span, 
-                class: ty.ok().unwrap(), 
-                prop: propname, 
+            return Ok(uhir::Expr::ClassMember {
+                span: member.span,
+                class: ty.ok().unwrap(),
+                prop: propname,
                 type_args: Vec::new(),
-                is_optchain: is_optchain
-            })
+                is_optchain: is_optchain,
+            });
         };
 
         let obj = obj?;
 
         // return a normal member expression
-        return Ok(uhir::Expr::Member { 
-            span: member.span, 
-            obj: Box::new(obj), 
-            prop: propname, 
+        return Ok(uhir::Expr::Member {
+            span: member.span,
+            obj: Box::new(obj),
+            prop: propname,
             type_args: Vec::new(),
-            is_optchain: is_optchain
-        })
+            is_optchain: is_optchain,
+        });
     }
 
-    pub fn translae_optchain(&mut self, o: &swc::OptChainExpr) -> Result<uhir::Expr>{
-        match o.base.as_ref(){
+    pub fn translae_optchain(&mut self, o: &swc::OptChainExpr) -> Result<uhir::Expr> {
+        match o.base.as_ref() {
             swc::OptChainBase::Member(m) => {
                 return self.translate_member(&m, true);
             }
             swc::OptChainBase::Call(c) => {
                 let callee = self.translate_expr(&c.callee)?;
 
-                if let Some(ty_args) = &c.type_args{
-                    return Err(Error::syntax_error(ty_args.span, "type arguments in dynamic call is not allowed"))
+                if let Some(ty_args) = &c.type_args {
+                    return Err(Error::syntax_error(
+                        ty_args.span,
+                        "type arguments in dynamic call is not allowed",
+                    ));
                 }
 
                 let mut args = Vec::new();
 
-                for p in &c.args{
-                    if let Some(spread) = p.spread{
-                        return Err(Error::syntax_error(spread, "variable arguments not supported"))
+                for p in &c.args {
+                    if let Some(spread) = p.spread {
+                        return Err(Error::syntax_error(
+                            spread,
+                            "variable arguments not supported",
+                        ));
                     }
                     args.push(self.translate_expr(&p.expr)?);
                 }
 
-                return Ok(uhir::Expr::Call { 
-                    span: c.span, 
-                    callee: uhir::Callee::Expr(callee.into()), 
-                    is_optchain: true, 
-                    type_args: Vec::new(), 
-                    args: args
-                })
+                return Ok(uhir::Expr::Call {
+                    span: c.span,
+                    callee: uhir::Callee::Expr(callee.into()),
+                    is_optchain: true,
+                    type_args: Vec::new(),
+                    args: args,
+                });
             }
         }
     }
 
     // new Class()
-    pub fn translate_new_expr(&mut self, n: &swc::NewExpr) -> Result<uhir::Expr>{
+    pub fn translate_new_expr(&mut self, n: &swc::NewExpr) -> Result<uhir::Expr> {
         let mut type_args = Vec::new();
 
         // translate type arguments
-        if let Some(args) = &n.type_args{
-            for arg in &args.params{
+        if let Some(args) = &n.type_args {
+            for arg in &args.params {
                 let ty = self.translate_ty(arg)?;
                 type_args.push(ty);
             }
@@ -694,21 +703,21 @@ impl Translater {
 
         let mut args = Vec::new();
 
-        if let Some(p) = &n.args{
-            for arg in p{
-                if let Some(spread) = arg.spread{
-                    return Err(Error::syntax_error(spread, "variable argumens not allowed"))
+        if let Some(p) = &n.args {
+            for arg in p {
+                if let Some(spread) = arg.spread {
+                    return Err(Error::syntax_error(spread, "variable argumens not allowed"));
                 }
 
                 args.push(self.translate_expr(&arg.expr)?);
-            };
+            }
         };
 
-        return Ok(uhir::Expr::New { 
-            span: n.span, 
-            callee: class, 
-            args: args 
-        })
+        return Ok(uhir::Expr::New {
+            span: n.span,
+            callee: class,
+            args: args,
+        });
     }
 
     pub fn translate_ts_instantiation(
@@ -717,7 +726,7 @@ impl Translater {
     ) -> Result<uhir::Expr> {
         let mut type_args = Vec::new();
 
-        for arg in &inst.type_args.params{
+        for arg in &inst.type_args.params {
             type_args.push(self.translate_ty(&arg)?);
         }
 
@@ -740,58 +749,49 @@ impl Translater {
                         func: f.clone(),
                     })
                 }
-                _ => {
-                    return Err(Error::syntax_error(id.span, "expected function"))
-                }
+                _ => return Err(Error::syntax_error(id.span, "expected function")),
             }
         };
 
-        if let Some(member) = inst.expr.as_member(){
-            let propname =
-            match &member.prop{
-                swc::MemberProp::Computed(c) => {
-                    self.translate_computed_prop_name(&c.expr)?
-                }
-                swc::MemberProp::Ident(id) => {
-                    uhir::PropName::Ident(id.sym.to_string())
-                }
-                swc::MemberProp::PrivateName(p) => {
-                    uhir::PropName::Private(p.id.sym.to_string())
-                }
+        if let Some(member) = inst.expr.as_member() {
+            let propname = match &member.prop {
+                swc::MemberProp::Computed(c) => self.translate_computed_prop_name(&c.expr)?,
+                swc::MemberProp::Ident(id) => uhir::PropName::Ident(id.sym.to_string()),
+                swc::MemberProp::PrivateName(p) => uhir::PropName::Private(p.id.sym.to_string()),
             };
             let obj = self.translate_expr(&member.obj);
 
             // failed to translate expression, expression may be a type
-            if obj.is_err(){
+            if obj.is_err() {
                 // try to translate as a type
                 let ty = self.translate_type_expr(&member.obj, Vec::new());
 
                 // it is not a type
-                if ty.is_err(){
+                if ty.is_err() {
                     // return the original error
-                    return Err(obj.err().unwrap())
+                    return Err(obj.err().unwrap());
                 }
 
                 // it is a type member
-                return Ok(uhir::Expr::ClassMember { 
-                    span: member.span, 
-                    class: ty.ok().unwrap(), 
-                    prop: propname, 
+                return Ok(uhir::Expr::ClassMember {
+                    span: member.span,
+                    class: ty.ok().unwrap(),
+                    prop: propname,
                     type_args: type_args,
-                    is_optchain: false 
-                })
+                    is_optchain: false,
+                });
             };
 
             let obj = obj?;
 
             // return a normal member expression
-            return Ok(uhir::Expr::Member { 
-                span: member.span, 
-                obj: Box::new(obj), 
-                prop: propname, 
+            return Ok(uhir::Expr::Member {
+                span: member.span,
+                obj: Box::new(obj),
+                prop: propname,
                 type_args: type_args,
-                is_optchain: false
-            })
+                is_optchain: false,
+            });
         }
 
         return Err(Error::syntax_error(

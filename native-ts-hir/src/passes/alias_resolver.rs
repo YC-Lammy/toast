@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use native_js_common::rc::Rc;
 use native_js_common::error::Error;
+use native_js_common::rc::Rc;
 use swc_common::Span;
 
 use crate::untyped_hir::{
@@ -27,9 +27,9 @@ impl Visitor for AliasResolver {
         {
             let mut resolved_generics = HashMap::new();
 
-            let type_args = if let Some(type_args) = type_args{
+            let type_args = if let Some(type_args) = type_args {
                 type_args.as_mut()
-            } else{
+            } else {
                 &mut []
             };
 
@@ -87,9 +87,13 @@ impl Visitor for AliasResolver {
 
             // replace the solved generics
             match &mut base {
-                Type::Class { span:_, type_args, class :_} => {
+                Type::Class {
+                    span: _,
+                    type_args,
+                    class: _,
+                } => {
                     // replace the type arguments
-                    if let Some(type_args) = type_args{
+                    if let Some(type_args) = type_args {
                         for arg in type_args.iter_mut() {
                             arg.visit(&mut replacer)?;
                         }
@@ -97,7 +101,7 @@ impl Visitor for AliasResolver {
                 }
                 Type::Function { type_args, func } => {
                     // replace the type arguments
-                    if let Some(type_args) = type_args{
+                    if let Some(type_args) = type_args {
                         for arg in type_args.iter_mut() {
                             arg.visit(&mut replacer)?;
                         }
@@ -114,12 +118,12 @@ impl Visitor for AliasResolver {
                     }
                 }
                 Type::Interface {
-                    span:_,
+                    span: _,
                     type_args,
-                    interface:_,
+                    interface: _,
                 } => {
                     // replace the type arguments
-                    if let Some(type_args) = type_args{
+                    if let Some(type_args) = type_args {
                         for arg in type_args.iter_mut() {
                             arg.visit(&mut replacer)?;
                         }

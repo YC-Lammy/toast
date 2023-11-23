@@ -33,11 +33,18 @@ interface Thing{
     
 }
 
-type I = RegExp;
+interface A{
+    a: number;
+}
+
+interface B{
+    a: string
+}
+
+type U = A & B;
 
 let human = new Human;
 var car = new Car;
 
-for (var t of [0, 9]){
-    let is_dead = car.crash(39, human);
-}
+let i = 0;
+i = i + 1;

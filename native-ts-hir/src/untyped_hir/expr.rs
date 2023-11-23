@@ -4,8 +4,8 @@ use native_js_common::rc::Rc;
 
 use crate::VarId;
 
-use super::{Function, DeepClone};
 use super::{types::*, EnumType};
+use super::{DeepClone, Function};
 
 pub use crate::PropName;
 pub use crate::Symbol;
@@ -59,7 +59,7 @@ pub enum BinOp {
     BitXor,
     BitAnd,
     Nullish,
-    In
+    In,
 }
 
 impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
@@ -94,7 +94,7 @@ impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
     }
 }
 
-impl Display for BinOp{
+impl Display for BinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Add => "+",
@@ -120,7 +120,7 @@ impl Display for BinOp{
             Self::Or => "||",
             Self::RShift => ">>",
             Self::Sub => "-",
-            Self::URShift => ">>>"
+            Self::URShift => ">>>",
         })
     }
 }
@@ -201,11 +201,11 @@ pub enum MemberOrVar<TY, F> {
         obj: Box<Expr<TY, F>>,
         prop: PropName,
     },
-    ClassMember{
+    ClassMember {
         span: Span,
         class: TY,
-        prop: PropName
-    }
+        prop: PropName,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -231,9 +231,9 @@ pub enum UnaryOp {
     Plus,
 }
 
-impl From<swc_ecmascript::ast::UnaryOp> for UnaryOp{
+impl From<swc_ecmascript::ast::UnaryOp> for UnaryOp {
     fn from(value: swc_ecmascript::ast::UnaryOp) -> Self {
-        match value{
+        match value {
             swc_ecmascript::ast::UnaryOp::Bang => Self::LogicalNot,
             swc_ecmascript::ast::UnaryOp::Delete => Self::Delete,
             swc_ecmascript::ast::UnaryOp::Minus => Self::Minus,
@@ -375,10 +375,10 @@ pub enum Expr<TY = Type, F = Function> {
         span: Span,
         exprs: Vec<Expr<TY, F>>,
     },
-    InstanceOf{
+    InstanceOf {
         span: Span,
         value: Box<Expr<TY, F>>,
-        ty: TY
+        ty: TY,
     },
     Cast {
         span: Span,
@@ -395,10 +395,14 @@ pub enum Expr<TY = Type, F = Function> {
 
 impl<TY, F> Expr<TY, F> {}
 
-impl<TY, F> DeepClone for Expr<TY, F> where TY:DeepClone, F:DeepClone{
+impl<TY, F> DeepClone for Expr<TY, F>
+where
+    TY: DeepClone,
+    F: DeepClone,
+{
     fn deep_clone(&self) -> Self {
-        match self{
-            _ => todo!()
+        match self {
+            _ => todo!(),
         }
     }
 }

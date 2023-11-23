@@ -35,10 +35,7 @@ pub trait Visitor {
         let _ = class;
         Ok(BreakOrContinue::Break)
     }
-    fn visit_function(
-        &mut self,
-        function: &mut Function,
-    ) -> Result<BreakOrContinue, Self::Error> {
+    fn visit_function(&mut self, function: &mut Function) -> Result<BreakOrContinue, Self::Error> {
         let _ = function;
         Ok(BreakOrContinue::Break)
     }
@@ -48,28 +45,30 @@ pub trait Visit {
     fn visit<V: Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error>;
 }
 
-impl Visit for Stmt{
+impl Visit for Stmt {
     fn visit<V: Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error> {
-        match self{
+        match self {
             Self::Block { .. } => {}
             Self::EndBlock => {}
             Self::Try { .. } => {}
-            Self::Catch { catch_binding_ty, .. } => {
+            Self::Catch {
+                catch_binding_ty, ..
+            } => {
                 catch_binding_ty.visit(visitor)?;
             }
             Self::Class(c) => {
                 c.visit(visitor)?;
             }
-            Self::Continue { .. } => {},
+            Self::Continue { .. } => {}
             Self::Break { .. } => {}
             Self::Declare { ty, init, .. } => {
                 ty.visit(visitor)?;
-                if let Some(init) = init{
+                if let Some(init) = init {
                     init.visit(visitor)?;
                 }
             }
             Self::Else => {}
-            Self::Empty => {},
+            Self::Empty => {}
             Self::EndElse => {}
             Self::EndIf => {}
             Self::EndLoop => {}
@@ -96,7 +95,7 @@ impl Visit for Stmt{
                 test.visit(visitor)?;
             }
             Self::SwitchCase { test, .. } => {
-                if let Some(test) = test{
+                if let Some(test) = test {
                     test.visit(visitor)?;
                 }
             }
@@ -107,21 +106,21 @@ impl Visit for Stmt{
         }
         visitor.visit_stmt(self)?;
 
-        return Ok(())
+        return Ok(());
     }
 }
 
 impl Visit for Expr {
     fn visit<V: Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error> {
         match self {
-            Self::Array { span:_, values } => {
+            Self::Array { span: _, values } => {
                 for v in values {
                     v.visit(visitor)?;
                 }
             }
             Self::Assign {
-                span:_,
-                assign_op:_,
+                span: _,
+                assign_op: _,
                 target,
                 value,
             } => {
@@ -139,11 +138,7 @@ impl Visit for Expr {
                 value.visit(visitor)?;
             }
             Self::BigInt(_) => {}
-            Self::Bin {
-                left,
-                right,
-                ..
-            } => {
+            Self::Bin { left, right, .. } => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
@@ -154,17 +149,14 @@ impl Visit for Expr {
                 args,
                 ..
             } => {
-                for ty in type_args.iter_mut(){
+                for ty in type_args.iter_mut() {
                     ty.visit(visitor)?;
                 }
-                for e in args.iter_mut(){
+                for e in args.iter_mut() {
                     e.visit(visitor)?;
                 }
                 match callee {
-                    Callee::ClassMember {
-                        class,
-                        ..
-                    } => {
+                    Callee::ClassMember { class, .. } => {
                         class.visit(visitor)?;
                     }
                     Callee::Expr(e) => {
@@ -173,33 +165,26 @@ impl Visit for Expr {
                     Callee::Function(f) => {
                         f.visit(visitor)?;
                     }
-                    Callee::Member {
-                        obj,
-                        ..
-                    } => {
+                    Callee::Member { obj, .. } => {
                         obj.visit(visitor)?;
                     }
                     Callee::Super => {}
                 }
-            },
+            }
             Self::Cast { value, to_ty, .. } => {
                 value.visit(visitor)?;
                 to_ty.visit(visitor)?;
             }
             Self::ClassMember {
-                class,
-                type_args,
-                ..
+                class, type_args, ..
             } => {
-                for ty in type_args{
+                for ty in type_args {
                     ty.visit(visitor)?;
                 }
                 class.visit(visitor)?;
             }
             Self::Function {
-                type_args,
-                func,
-                ..
+                type_args, func, ..
             } => {
                 for ty in type_args {
                     ty.visit(visitor)?;
@@ -211,25 +196,17 @@ impl Visit for Expr {
             }
             Self::ImportMeta => {}
             Self::Integer(_) => {}
-            Self::InstanceOf { span:_, value, ty } => {
+            Self::InstanceOf { span: _, value, ty } => {
                 value.visit(visitor)?;
                 ty.visit(visitor)?;
             }
-            Self::Member {
-                obj,
-                type_args,
-                ..
-            } => {
-                for ty in type_args{
+            Self::Member { obj, type_args, .. } => {
+                for ty in type_args {
                     ty.visit(visitor)?;
                 }
                 obj.visit(visitor)?;
             }
-            Self::New {
-                callee, 
-                args,
-                ..
-            } => {
+            Self::New { callee, args, .. } => {
                 callee.visit(visitor)?;
 
                 for arg in args {
@@ -254,10 +231,7 @@ impl Visit for Expr {
             Self::String(_) => {}
             Self::SuperMember { .. } => {}
             Self::Ternary {
-                test,
-                left,
-                right,
-                ..
+                test, left, right, ..
             } => {
                 test.visit(visitor)?;
                 left.visit(visitor)?;
@@ -279,10 +253,7 @@ impl Visit for Expr {
                     class.visit(visitor)?;
                 }
             },
-            Self::Yield {
-                value,
-                ..
-            } => {
+            Self::Yield { value, .. } => {
                 value.visit(visitor)?;
             }
         };
@@ -294,21 +265,21 @@ impl Visit for Expr {
     }
 }
 
-impl Visit for Function{
+impl Visit for Function {
     fn visit<V: Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error> {
-        if self.visitor_fingerprint == V::FINGER_PRINT{
-            return Ok(())
+        if self.visitor_fingerprint == V::FINGER_PRINT {
+            return Ok(());
         };
 
         self.visitor_fingerprint = V::FINGER_PRINT;
 
         self.ty.visit(visitor)?;
 
-        for s in &mut self.stmts{
+        for s in &mut self.stmts {
             s.visit(visitor)?;
-        };
+        }
 
-        return Ok(())
+        return Ok(());
     }
 }
 
@@ -331,20 +302,16 @@ impl Visit for Type {
             | Self::Super
             | Self::Return
             | Self::Generic(_) => {}
-            Self::Array(t)
-            | Self::Iterator(t)
-            | Self::Map(t)
-            | Self::Promise(t) => {
+            Self::Array(t) | Self::Iterator(t) | Self::Map(t) | Self::Promise(t) => {
                 t.visit(visitor)?;
             }
             Self::Function { type_args, func } => {
-
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     for ty in type_args.iter_mut() {
                         ty.visit(visitor)?;
                     }
                 }
-                
+
                 func.visit(visitor)?;
             }
             Self::Union(u) => {
@@ -352,8 +319,12 @@ impl Visit for Type {
                     ty.visit(visitor)?;
                 }
             }
-            Self::Class { span: _, type_args, class } => {
-                if let Some(type_args) = type_args{
+            Self::Class {
+                span: _,
+                type_args,
+                class,
+            } => {
+                if let Some(type_args) = type_args {
                     for ty in type_args.iter_mut() {
                         ty.visit(visitor)?;
                     }
@@ -362,11 +333,11 @@ impl Visit for Type {
                 class.visit(visitor)?;
             }
             Self::Interface {
-                span:_,
+                span: _,
                 type_args,
                 interface,
             } => {
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     for ty in type_args.iter_mut() {
                         ty.visit(visitor)?;
                     }
@@ -377,12 +348,12 @@ impl Visit for Type {
             Self::Alias {
                 type_args, alias, ..
             } => {
-                if let Some(type_args) = type_args{
+                if let Some(type_args) = type_args {
                     for ty in type_args.iter_mut() {
                         ty.visit(visitor)?;
                     }
                 }
-                
+
                 alias.base.visit(visitor)?;
             }
         }
@@ -403,20 +374,20 @@ impl Visit for ClassType {
 
         self.visit_fingerprint = V::FINGER_PRINT;
 
-        for g in &mut self.generics{
-            if let Some(d) = &mut g.default{
+        for g in &mut self.generics {
+            if let Some(d) = &mut g.default {
                 d.visit(visitor)?;
             }
-            if let Some(c) = &mut g.constrain{
+            if let Some(c) = &mut g.constrain {
                 c.visit(visitor)?;
             }
         }
 
-        if let Some(super_ty) = &mut self.extends{
+        if let Some(super_ty) = &mut self.extends {
             super_ty.visit(visitor)?;
         }
 
-        for i in &mut self.implements{
+        for i in &mut self.implements {
             i.visit(visitor)?;
         }
 
@@ -428,12 +399,12 @@ impl Visit for ClassType {
             prop.ty.visit(visitor)?;
         }
 
-        for m in &mut self.static_functions{
+        for m in &mut self.static_functions {
             m.function.ty.visit(visitor)?;
             visitor.visit_function(&mut m.function)?;
         }
 
-        for m in &mut self.methods{
+        for m in &mut self.methods {
             m.function.ty.visit(visitor)?;
             visitor.visit_function(&mut m.function)?;
         }
@@ -455,12 +426,12 @@ impl Visit for FunctionType {
             p.visit(visitor)?;
         }
 
-        for g in &mut self.generics{
-            if let Some(d) = &mut g.default{
+        for g in &mut self.generics {
+            if let Some(d) = &mut g.default {
                 d.visit(visitor)?;
             }
 
-            if let Some(c) = &mut g.constrain{
+            if let Some(c) = &mut g.constrain {
                 c.visit(visitor)?;
             }
         }
@@ -493,11 +464,11 @@ impl Visit for InterfaceType {
             m.ty.visit(visitor)?;
         }
 
-        for g in &mut self.generics{
-            if let Some(d) = &mut g.default{
+        for g in &mut self.generics {
+            if let Some(d) = &mut g.default {
                 d.visit(visitor)?;
             }
-            if let Some(c) = &mut g.constrain{
+            if let Some(c) = &mut g.constrain {
                 c.visit(visitor)?;
             }
         }

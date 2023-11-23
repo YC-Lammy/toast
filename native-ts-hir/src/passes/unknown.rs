@@ -11,13 +11,20 @@ use crate::{
     PropName,
 };
 
+#[derive(Default)]
 pub struct UnknownFinder {
     resolved_unknown: HashMap<UnknownId, Type>,
 }
 
 impl UnknownFinder {
+    pub fn resolver(self) -> UnknownResolver {
+        UnknownResolver {
+            resolved_unknown: self.resolved_unknown,
+        }
+    }
+
     fn try_resolve_unknown(&mut self, ty: &mut Type, init: Option<&mut Expr>) {
-        if let Type::Unknown { span:_, id } = ty {
+        if let Type::Unknown { span: _, id } = ty {
             // unknown is already resolved
             if let Some(resolved) = self.resolved_unknown.get(id) {
                 // replace the original type definition
@@ -49,20 +56,20 @@ impl UnknownFinder {
             Expr::String(_) => Some(Type::String),
             Expr::Regex { .. } => Some(Type::Regex),
             Expr::Function {
-                span:_,
+                span: _,
                 type_args,
                 func,
             } => {
                 debug_assert!(type_args.is_empty());
 
                 Some(Type::Function {
-                type_args: None,
-                func: func.ty.clone(),
+                    type_args: None,
+                    func: func.ty.clone(),
                 })
-            },
+            }
             Expr::NewTarget => todo!(),
             Expr::ImportMeta => todo!(),
-            Expr::Array { span:_, values } => {
+            Expr::Array { span: _, values } => {
                 let mut tys = Vec::new();
                 for e in values {
                     let t = self.trace_expr(e)?;
@@ -83,7 +90,7 @@ impl UnknownFinder {
             }
             Expr::Assign { target, .. } => match target {
                 MemberOrVar::Var { ty, .. } => return Some(ty.clone()),
-                MemberOrVar::Member { span:_, obj, prop } => {
+                MemberOrVar::Member { span: _, obj, prop } => {
                     return self.trace_member(obj, prop, false)
                 }
                 MemberOrVar::ClassMember { class, prop, .. } => {
@@ -92,16 +99,16 @@ impl UnknownFinder {
             },
             Expr::Await { value, .. } => {
                 let ty = self.trace_expr(value)?;
-                
-                if let Type::Unknown { .. } = ty{
-                    return None
+
+                if let Type::Unknown { .. } = ty {
+                    return None;
                 }
 
-                if let Type::Promise(t) = ty{
-                    return Some(*t)
+                if let Type::Promise(t) = ty {
+                    return Some(*t);
                 }
 
-                return Some(ty)
+                return Some(ty);
             }
 
             Expr::Bin {
@@ -155,9 +162,7 @@ impl UnknownFinder {
                     | BinOp::Gteq
                     | BinOp::Lt
                     | BinOp::Lteq
-                    | BinOp::In => {
-                        return Some(Type::Bool)
-                    }
+                    | BinOp::In => return Some(Type::Bool),
                     BinOp::Or | BinOp::Nullish => {
                         let l = self.trace_expr(left)?;
                         let r = self.trace_expr(right)?;
@@ -188,13 +193,12 @@ impl UnknownFinder {
             },
             Expr::New { callee, .. } => return Some(callee.clone()),
             Expr::Call {
-                span:_,
+                span: _,
                 callee: Callee::Function(f),
-                is_optchain:_,
+                is_optchain: _,
                 type_args,
                 ..
             } => {
-
                 debug_assert!(type_args.is_empty());
                 debug_assert!(f.ty.generics.is_empty());
 
@@ -205,9 +209,9 @@ impl UnknownFinder {
                 ..
             } => return Some(Type::Super),
             Expr::Call {
-                span:_,
+                span: _,
                 callee,
-                is_optchain:_,
+                is_optchain: _,
                 type_args,
                 ..
             } => {
@@ -220,18 +224,14 @@ impl UnknownFinder {
                         prop,
                         is_optchain,
                         ..
-                    } => {
-                        self.trace_class_member(class, prop, *is_optchain)?
-                    }
+                    } => self.trace_class_member(class, prop, *is_optchain)?,
                     Callee::Expr(e) => self.trace_expr(e)?,
                     Callee::Member {
                         span: _,
                         obj,
                         prop,
                         is_optchain,
-                    } => {
-                        self.trace_member(obj, prop, *is_optchain)?
-                    }
+                    } => self.trace_member(obj, prop, *is_optchain)?,
                     _ => unreachable!(),
                 };
 
@@ -241,9 +241,8 @@ impl UnknownFinder {
                         debug_assert!(type_args.is_none());
 
                         return Some(func.return_ty.clone());
-                        
                     }
-                    _ => None
+                    _ => None,
                 }
             }
             Expr::SuperMember { .. } => {
@@ -274,7 +273,7 @@ impl UnknownFinder {
                 ..
             } => self.trace_member(obj, prop, false),
             Expr::Update {
-                target:MemberOrVar::ClassMember { class, prop, .. },
+                target: MemberOrVar::ClassMember { class, prop, .. },
                 ..
             } => self.trace_class_member(class, prop, false),
             Expr::Yield { .. } => None,
@@ -300,7 +299,11 @@ impl UnknownFinder {
         let obj = self.trace_expr(obj)?;
 
         match obj {
-            Type::Class { span:_, type_args, class } => {
+            Type::Class {
+                span: _,
+                type_args,
+                class,
+            } => {
                 // should be resolved
                 debug_assert!(type_args.is_none());
                 debug_assert!(class.generics.is_empty());
@@ -309,13 +312,13 @@ impl UnknownFinder {
                     return Some(attr.ty.clone());
                 }
 
-                if let Some(m) = class.methods.iter().find(|m|m.name.eq(prop)){
+                if let Some(m) = class.methods.iter().find(|m| m.name.eq(prop)) {
                     debug_assert!(m.function.ty.generics.is_empty());
 
-                    return Some(Type::Function { 
-                        type_args: None, 
-                        func: m.function.ty.clone() 
-                    })
+                    return Some(Type::Function {
+                        type_args: None,
+                        func: m.function.ty.clone(),
+                    });
                 }
 
                 if optchain {
@@ -323,7 +326,7 @@ impl UnknownFinder {
                 }
             }
             Type::Interface {
-                span:_,
+                span: _,
                 type_args,
                 interface,
             } => {
@@ -338,11 +341,11 @@ impl UnknownFinder {
                     return Some(attr.ty.clone());
                 }
 
-                if let Some(m) = interface.methods.iter().find(|m|m.name.eq(prop)){
-                    return Some(Type::Function{
+                if let Some(m) = interface.methods.iter().find(|m| m.name.eq(prop)) {
+                    return Some(Type::Function {
                         type_args: None,
-                        func: m.ty.clone()
-                    })
+                        func: m.ty.clone(),
+                    });
                 }
 
                 if optchain {
@@ -377,29 +380,32 @@ impl UnknownFinder {
         prop: &PropName,
         optchain: bool,
     ) -> Option<Type> {
-        match class_ty{
-            Type::Class { span:_, type_args, class } => {
+        match class_ty {
+            Type::Class {
+                span: _,
+                type_args,
+                class,
+            } => {
                 debug_assert!(type_args.is_none());
 
-                if let Some(p) = class.static_props.iter().find(|p|p.name.eq(prop)){
-                    return Some(p.ty.clone())
+                if let Some(p) = class.static_props.iter().find(|p| p.name.eq(prop)) {
+                    return Some(p.ty.clone());
                 };
 
-                if optchain{
-                    return Some(Type::Undefined)
+                if optchain {
+                    return Some(Type::Undefined);
                 }
 
-                return None
+                return None;
             }
             Type::Enum(e) => {
-                if let Some(_) = e.variants.iter().find(|e|e.name.eq(prop)){
-                    return Some(Type::Enum(e.clone()))
+                if let Some(_) = e.variants.iter().find(|e| e.name.eq(prop)) {
+                    return Some(Type::Enum(e.clone()));
                 }
             }
             _ => {}
         }
-        return None
-
+        return None;
     }
 }
 
@@ -426,7 +432,7 @@ impl Visitor for UnknownFinder {
             // variable assignment may be able to give us type
             Expr::Assign {
                 span: _,
-                assign_op:_,
+                assign_op,
                 target: MemberOrVar::Var { ty, .. },
                 value,
             } => {
@@ -438,6 +444,7 @@ impl Visitor for UnknownFinder {
     }
 }
 
+#[derive(Default)]
 pub struct UnknownResolver {
     resolved_unknown: HashMap<UnknownId, Type>,
 }

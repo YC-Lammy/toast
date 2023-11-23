@@ -4,18 +4,17 @@ use native_js_common::error::Error;
 use swc_common::Span;
 
 use crate::untyped_hir::{
-    GenericId, 
-    visit::{Visitor, BreakOrContinue}, 
-    Type
+    visit::{BreakOrContinue, Visitor},
+    GenericId, Type,
 };
 
 pub mod alias_resolver;
-pub mod generic_interface_resolver;
 pub mod generic_class_resolver;
 pub mod generic_function_resolver;
-pub mod unknown;
-pub mod type_normaliser;
+pub mod generic_interface_resolver;
 pub mod type_check;
+pub mod type_normaliser;
+pub mod unknown;
 
 struct GenericReplacer {
     pub generics: HashMap<GenericId, Type>,

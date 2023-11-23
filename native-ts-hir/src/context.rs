@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use native_js_common::rc::Rc;
+use std::collections::HashMap;
 
 use native_ts_parser::ModuleId;
 
