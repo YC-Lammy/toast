@@ -46,7 +46,7 @@ pub fn remove_duplicate_alternatives(d: &mut Disjunction){
     let mut c:usize = 0;
 
     d.alternatives.retain(
-        |alt|{
+        |_alt|{
             if need_remove.contains(&c){
                 c += 1;
 
@@ -59,7 +59,7 @@ pub fn remove_duplicate_alternatives(d: &mut Disjunction){
 }
 
 pub fn optimise_alternatives(d: &mut Disjunction){
-    for alt in &mut d.alternatives{
+    for _alt in &mut d.alternatives{
         //remove_duplicated_terms(alt);
     }
 }

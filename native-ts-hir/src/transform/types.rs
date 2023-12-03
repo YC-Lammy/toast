@@ -1,10 +1,15 @@
+use std::collections::HashMap;
+
 use native_js_common::error::Error;
 use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
-use crate::ast::{ClassType, EnumType, EnumVariantDesc, FuncType, InterfaceType, Type};
+use crate::ast::{
+    ClassType, EnumType, EnumVariantDesc, FuncType, InterfaceMethod, InterfacePropertyDesc,
+    InterfaceType, PropNameOrExpr, Type,
+};
 use crate::common::{AliasId, ClassId, FunctionId, InterfaceId};
-use crate::PropName;
+use crate::{PropName, Symbol};
 
 type Result<T> = std::result::Result<T, Error<Span>>;
 
@@ -16,8 +21,241 @@ impl Transformer {
         todo!()
     }
 
+    pub fn translate_class(&mut self, id: ClassId, class: &swc::Class) -> Result<()> {
+        return Ok(());
+    }
+
+    pub fn translate_function_ty(&mut self, func: &swc::Function) -> Result<FuncType> {
+        if func.type_params.is_some(){
+            unimplemented!("generic function")
+        }
+        let mut this_ty = Type::Any;
+        let mut return_ty = Type::Undefined;
+        let mut params = Vec::new();
+        let is_var_arg = false;
+
+        for (i, p) in func.params.iter().enumerate(){
+            if let Some(ident) = p.pat.as_ident(){
+                if let Some(ann) = &ident.type_ann{
+                    let ty = self.translate_type(&ann.type_ann)?;
+
+                    if i == 0 && ident.sym.as_ref() == "this"{
+                        this_ty = ty;
+                    } else{
+                        params.push(ty);
+                    };
+                } else{
+                    return Err(Error::syntax_error(ident.span, "missing type annotation"))
+                }
+            } else if let Some(rest) = p.pat.as_rest(){
+                //is_var_arg = true;
+
+                if i != func.params.len() - 1{
+                    return Err(Error::syntax_error(rest.dot3_token, "variable arguments is only allowed at the last param"))
+                }
+
+                return Err(Error::syntax_error(rest.dot3_token, "variable arguments not supported"))
+            } else{
+                return Err(Error::syntax_error(p.span, "destructive params not allowed"))
+            }
+        }
+
+        if let Some(ann) = &func.return_type{
+            return_ty = self.translate_type(&ann.type_ann)?;
+        }
+
+        if func.is_async{
+            return_ty = Type::Promise(Box::new(return_ty));
+        }
+
+        if func.is_generator{
+            return_ty = Type::Iterator(Box::new(return_ty));
+        }
+
+        return Ok(FuncType { this_ty, params, var_arg: is_var_arg, return_ty })
+    }
+
     pub fn translate_interface(&mut self, iface: &swc::TsInterfaceDecl) -> Result<InterfaceType> {
-        todo!()
+        let mut iface_ty = InterfaceType {
+            name: iface.id.sym.to_string(),
+            extends: Vec::new(),
+            implements: Vec::new(),
+            properties: HashMap::new(),
+            methods: HashMap::new(),
+        };
+
+        for ty in &iface.extends {
+            let type_args = if let Some(type_args) = &ty.type_args {
+                self.translate_type_args(&type_args)?
+            } else {
+                Vec::new()
+            };
+
+            let t = self.translate_expr_type(&ty.expr, &type_args)?;
+
+            match t {
+                Type::Object(class_id) => iface_ty.extends.push(class_id),
+                Type::Interface(iface_id) => iface_ty.implements.push(iface_id),
+                _ => {
+                    return Err(Error::syntax_error(
+                        ty.span,
+                        "expected class or interface, found type ''",
+                    ))
+                }
+            }
+        }
+
+        if let Some(_) = &iface.type_params {
+            unreachable!()
+        }
+
+        for elem in &iface.body.body {
+            match elem {
+                swc::TsTypeElement::TsCallSignatureDecl(c) => {
+                    return Err(Error::syntax_error(c.span, "call signature not allowed"))
+                }
+                swc::TsTypeElement::TsConstructSignatureDecl(c) => {
+                    return Err(Error::syntax_error(
+                        c.span,
+                        "constructor signature not allowed",
+                    ))
+                }
+                swc::TsTypeElement::TsIndexSignature(i) => {
+                    return Err(Error::syntax_error(i.span, "index signature not allowed"))
+                }
+                swc::TsTypeElement::TsGetterSignature(g) => {
+                    return Err(Error::syntax_error(g.span, "getter not supported"))
+                }
+                swc::TsTypeElement::TsSetterSignature(s) => {
+                    return Err(Error::syntax_error(s.span, "setter not supported"))
+                }
+                swc::TsTypeElement::TsPropertySignature(p) => {
+                    if let Some(init) = &p.init {
+                        return Err(Error::syntax_error(init.span(), "initialiser not allowed"));
+                    }
+                    if let Some(type_params) = &p.type_params {
+                        return Err(Error::syntax_error(
+                            type_params.span,
+                            "generics not allowed",
+                        ));
+                    }
+                    if !p.params.is_empty() {
+                        return Err(Error::syntax_error(p.span, "params not allowed"));
+                    }
+                    let key = if p.computed {
+                        self.translate_computed_prop_name(&p.key)?
+                    } else {
+                        if let Some(id) = p.key.as_ident() {
+                            PropNameOrExpr::PropName(PropName::Ident(id.sym.to_string()))
+                        } else {
+                            self.translate_computed_prop_name(&p.key)?
+                        }
+                    };
+
+                    let key = match key {
+                        PropNameOrExpr::Expr(..) => {
+                            return Err(Error::syntax_error(
+                                p.key.span(),
+                                "property of interface must be literal",
+                            ))
+                        }
+                        PropNameOrExpr::PropName(p) => p,
+                    };
+
+                    if iface_ty.properties.contains_key(&key) {
+                        return Err(Error::syntax_error(p.span, "duplicated attributes"));
+                    }
+
+                    if let Some(ann) = &p.type_ann {
+                        let mut ty = self.translate_type(&ann.type_ann)?;
+
+                        if p.optional {
+                            ty = ty.union(Type::Undefined);
+                        }
+
+                        iface_ty.properties.insert(
+                            key,
+                            InterfacePropertyDesc {
+                                ty: ty,
+                                readonly: p.readonly,
+                                optional: p.optional,
+                            },
+                        );
+                    } else {
+                        return Err(Error::syntax_error(p.span, "missing type annotation"));
+                    }
+                }
+                swc::TsTypeElement::TsMethodSignature(m) => {
+                    if let Some(type_params) = &m.type_params {
+                        return Err(Error::syntax_error(
+                            type_params.span,
+                            "generics not allowed",
+                        ));
+                    }
+
+                    let mut method_ty = InterfaceMethod {
+                        readonly: m.readonly,
+                        optional: m.optional,
+                        params: Vec::new(),
+                        return_ty: Type::Undefined,
+                    };
+
+                    let key = if m.computed {
+                        self.translate_computed_prop_name(&m.key)?
+                    } else {
+                        if let Some(id) = m.key.as_ident() {
+                            PropNameOrExpr::PropName(PropName::Ident(id.sym.to_string()))
+                        } else {
+                            self.translate_computed_prop_name(&m.key)?
+                        }
+                    };
+
+                    let key = match key {
+                        PropNameOrExpr::Expr(..) => {
+                            return Err(Error::syntax_error(
+                                m.key.span(),
+                                "property of interface must be literal",
+                            ))
+                        }
+                        PropNameOrExpr::PropName(p) => p,
+                    };
+
+                    if iface_ty.methods.contains_key(&key) {
+                        return Err(Error::syntax_error(m.span, "duplicated methods"));
+                    }
+
+                    for param in &m.params {
+                        match param {
+                            swc::TsFnParam::Ident(ident) => {
+                                if let Some(ann) = &ident.type_ann {
+                                    let mut ty = self.translate_type(&ann.type_ann)?;
+
+                                    if ident.optional {
+                                        ty = ty.union(Type::Undefined);
+                                    }
+                                    method_ty.params.push(ty);
+                                }
+                            }
+                            _ => {
+                                return Err(Error::syntax_error(
+                                    param.span(),
+                                    "destructive params not allowed",
+                                ))
+                            }
+                        }
+                    }
+
+                    if let Some(ann) = &m.type_ann {
+                        let ty = self.translate_type(&ann.type_ann)?;
+                        method_ty.return_ty = ty;
+                    }
+
+                    iface_ty.methods.insert(key, method_ty);
+                }
+            }
+        }
+
+        return Ok(iface_ty);
     }
 
     pub fn translate_enum(&mut self, e: &swc::TsEnumDecl) -> Result<EnumType> {
@@ -43,6 +281,116 @@ impl Transformer {
         }
 
         todo!()
+    }
+
+    pub fn translate_expr_type(&mut self, expr: &swc::Expr, type_args: &[Type]) -> Result<Type> {
+        let binding = match self.find_expr_binding(&expr) {
+            Some(b) => b,
+            None => return Err(Error::syntax_error(expr.span(), "undefined identifier")),
+        };
+
+        let mut generics_allowed = false;
+
+        let ty = match binding {
+            Binding::Class(c) => Type::Object(c),
+            Binding::Enum(e) => Type::Enum(e),
+            Binding::Interface(i) => Type::Interface(i),
+            Binding::TypeAlias(id) => {
+                if let Some(ty) = self.context.alias.get(&id) {
+                    ty.clone()
+                } else {
+                    Type::Alias(id)
+                }
+            }
+            Binding::GenericFunction(_) | Binding::Function(_) => {
+                return Err(Error::syntax_error(
+                    expr.span(),
+                    "expected type, found function",
+                ))
+            }
+            Binding::Generic(_) => todo!("generics"),
+            Binding::GenericClass(id) => {
+                generics_allowed = true;
+
+                if type_args.len() == 0 {
+                    return Err(Error::syntax_error(expr.span(), "missing type arguments"));
+                }
+                let id = self.solve_generic_class(id, type_args)?;
+                Type::Object(id)
+            }
+
+            Binding::GenericInterface(id) => {
+                generics_allowed = true;
+
+                if type_args.is_empty() {
+                    return Err(Error::syntax_error(expr.span(), "missing type arguments"));
+                }
+
+                let id = self.solve_generic_interface(id, type_args)?;
+                Type::Interface(id)
+            }
+            Binding::GenericTypeAlias(id) => {
+                generics_allowed = true;
+
+                if type_args.is_empty() {
+                    return Err(Error::syntax_error(expr.span(), "missing type arguments"));
+                }
+
+                let id = self.solve_generic_alias(id, type_args)?;
+
+                if let Some(ty) = self.context.alias.get(&id) {
+                    ty.clone()
+                } else {
+                    Type::Alias(id)
+                }
+            }
+            Binding::NameSpace(_) => {
+                return Err(Error::syntax_error(
+                    expr.span(),
+                    "expected type, found namespace",
+                ))
+            }
+            Binding::Using { .. } | Binding::Var { .. } => {
+                return Err(Error::syntax_error(
+                    expr.span(),
+                    "expected type, found variable",
+                ))
+            }
+        };
+
+        if !generics_allowed {
+            if !type_args.is_empty() {
+                return Err(Error::syntax_error(
+                    expr.span(),
+                    "expected 0 type arguments",
+                ));
+            }
+        }
+
+        return Ok(ty);
+    }
+
+    fn find_expr_binding(&mut self, expr: &swc::Expr) -> Option<Binding> {
+        match expr {
+            swc::Expr::Paren(p) => return self.find_expr_binding(&p.expr),
+            swc::Expr::Member(m) => {
+                let binding = self.find_expr_binding(&m.obj)?;
+
+                match binding {
+                    Binding::NameSpace(mid) => {
+                        let prop = match &m.prop {
+                            swc::MemberProp::Computed(_) => return None,
+                            swc::MemberProp::Ident(id) => PropName::Ident(id.to_string()),
+                            swc::MemberProp::PrivateName(_) => return None,
+                        };
+                        return self.find_binding_from_module(mid, &prop);
+                    }
+                    _ => return None,
+                }
+            }
+            swc::Expr::Ident(id) => return self.context.find(&id.sym).cloned(),
+            _ => None,
+        }
     }
 
     pub fn translate_type(&mut self, ty: &swc::TsType) -> Result<Type> {
@@ -192,8 +540,9 @@ impl Transformer {
                         Some(Binding::GenericFunction(id)) => {
                             allow_generics = true;
 
-                            if let Some(args) = &q.type_args {
-                                let id = self.solve_generic_function(id, &args)?;
+                            if let Some(type_args) = &q.type_args {
+                                let type_args = self.translate_type_args(&type_args)?;
+                                let id = self.solve_generic_function(id, &type_args)?;
 
                                 let func = self.context.functions.get(&id).unwrap();
 
@@ -304,7 +653,8 @@ impl Transformer {
                         generics_allowed = true;
 
                         if let Some(type_args) = &r.type_params {
-                            let id = self.solve_generic_class(id, type_args)?;
+                            let type_args = self.translate_type_args(&type_args)?;
+                            let id = self.solve_generic_class(id, &type_args)?;
                             Type::Object(id)
                         } else {
                             return Err(Error::syntax_error(r.span, "missing type arguments"));
@@ -315,7 +665,8 @@ impl Transformer {
                         generics_allowed = true;
 
                         if let Some(type_args) = &r.type_params {
-                            let id = self.solve_generic_interface(id, type_args)?;
+                            let type_args = self.translate_type_args(&type_args)?;
+                            let id = self.solve_generic_interface(id, &type_args)?;
                             Type::Interface(id)
                         } else {
                             return Err(Error::syntax_error(r.span, "missing type arguments"));
@@ -325,7 +676,8 @@ impl Transformer {
                         generics_allowed = true;
 
                         if let Some(type_args) = &r.type_params {
-                            let id = self.solve_generic_alias(id, type_args)?;
+                            let type_args = self.translate_type_args(&type_args)?;
+                            let id = self.solve_generic_alias(id, &type_args)?;
 
                             if let Some(ty) = self.context.alias.get(&id) {
                                 ty.clone()
@@ -459,6 +811,7 @@ impl Transformer {
             extends: Vec::new(),
             implements: Vec::new(),
             properties: Default::default(),
+            methods: Default::default(),
         };
 
         for ty in &intersec.types {
@@ -508,47 +861,816 @@ impl Transformer {
         }
     }
 
+    pub fn translate_type_args(
+        &mut self,
+        args: &swc::TsTypeParamInstantiation,
+    ) -> Result<Vec<Type>> {
+        let mut v = Vec::with_capacity(args.params.len());
+
+        for ty in &args.params {
+            v.push(self.translate_type(&ty)?);
+        }
+
+        return Ok(v);
+    }
+
     pub fn solve_generic_function(
         &mut self,
-        id: FunctionId,
-        type_args: &swc::TsTypeParamInstantiation,
+        _id: FunctionId,
+        _type_args: &[Type],
     ) -> Result<FunctionId> {
         todo!("generic function")
     }
 
-    pub fn solve_generic_class(
-        &mut self,
-        id: ClassId,
-        type_args: &swc::TsTypeParamInstantiation,
-    ) -> Result<ClassId> {
+    pub fn solve_generic_class(&mut self, _id: ClassId, _type_args: &[Type]) -> Result<ClassId> {
         todo!("generic class")
     }
 
     pub fn solve_generic_interface(
         &mut self,
-        id: InterfaceId,
-        type_args: &swc::TsTypeParamInstantiation,
+        _id: InterfaceId,
+        _type_args: &[Type],
     ) -> Result<InterfaceId> {
         todo!("generic class")
     }
 
-    pub fn solve_generic_alias(
-        &mut self,
-        id: AliasId,
-        type_args: &swc::TsTypeParamInstantiation,
-    ) -> Result<AliasId> {
+    pub fn solve_generic_alias(&mut self, _id: AliasId, _type_args: &[Type]) -> Result<AliasId> {
         todo!("generic class")
     }
 
-    pub fn type_check(&mut self, span: Span, ty: &Type, fulfills: &Type) -> Result<()> {
-        todo!()
+    // returns the iterator type, iterator result type and the value type
+    pub fn type_is_iterable(&self, span: Span, iterable_ty: &Type) -> Result<(Type, Type, Type)> {
+        let iterator_result_ty: Type;
+        let value_ty: Type;
+
+        let iterator_func_ty = match self.type_has_property(
+            &iterable_ty,
+            &PropName::Symbol(crate::Symbol::Iterator),
+            true,
+        ) {
+            Some(ty) => ty,
+            None => {
+                return Err(Error::syntax_error(
+                    span,
+                    format!("type '' is not iterable, missing property [Symbol.iterator]"),
+                ))
+            }
+        };
+
+        let iterator_ty = match iterator_func_ty {
+            Type::Function(func) => {
+                // param must be empty
+                if !func.params.is_empty() {
+                    return Err(Error::syntax_error(span, format!("type '' is not iterable, property [Symbol.iterator] is expected to have 0 arguments")));
+                }
+                // check this type matches iterable
+                match self.type_check(span, &iterable_ty, &func.this_ty){
+                    Ok(_) => {},
+                    Err(_) => {
+                        return Err(Error::syntax_error(span, format!("type '' is not iterable, property [Symbol.iterator] has mismatched 'this' argument: type '' is not assignable to ''")))
+                    }
+                };
+                // the return type is the iterator type
+                func.return_ty
+            }
+            _ => {
+                return Err(Error::syntax_error(
+                    span,
+                    format!("type '' is not iterable, property [Symbol.iterator] is not callable"),
+                ))
+            }
+        };
+
+        // check iterator have next() method
+        match self.type_has_property(&iterator_ty, &PropName::Ident("next".to_string()), true) {
+            Some(next_func_ty) => {
+                // check next is a function
+                iterator_result_ty = match next_func_ty{
+                    Type::Function(func) => {
+                        // param must be empty
+                        if !func.params.is_empty(){
+                            return Err(Error::syntax_error(span, format!("type '' is not iterable, property [Symbol.iterator]().next is expected to have 0 arguments")))
+                        }
+                        // 'this' type must be equal to iterator
+                        match self.type_check(span, &iterator_ty, &func.this_ty){
+                            Ok(_) => {},
+                            Err(_) => {
+                                return Err(Error::syntax_error(span, format!("type '' is not iterable, property [Symbol.iterator]().next has mismatched 'this' argument: type '' is not assignable to ''")))
+                            }
+                        };
+                        // the return type is iterator result
+                        func.return_ty
+                    }
+                    // next is not a function
+                    _ => return Err(Error::syntax_error(span, format!("type '' is not iterable, property [Symbol.iterator]().next is not callable")))
+                };
+
+                if self
+                    .type_has_property(
+                        &iterator_result_ty,
+                        &PropName::Ident("done".to_string()),
+                        false,
+                    )
+                    .is_none()
+                {
+                    return Err(Error::syntax_error(span, format!("type '' is not iterable, missing property [Symbol.iterator]().next().done")));
+                }
+                if let Some(value) = self.type_has_property(
+                    &iterator_result_ty,
+                    &PropName::Ident("value".to_string()),
+                    false,
+                ) {
+                    value_ty = value;
+                } else {
+                    return Err(Error::syntax_error(span, format!("type '' is not iterable, missing property [Symbol.iterator]().next().value")));
+                }
+            }
+            // no property next
+            None => {
+                return Err(Error::syntax_error(
+                    span,
+                    format!("type '' is not iterable, missing property [Symbol.iterator]().next"),
+                ))
+            }
+        };
+
+        return Ok((iterator_ty, iterator_result_ty, value_ty));
     }
 
-    pub fn type_has_property(&mut self, span:Span, ty: &Type, prop: &PropName) -> Option<Type>{
-
-        match ty{
-            _ => {}
+    pub fn type_check(&self, span: Span, ty: &Type, fulfills: &Type) -> Result<()> {
+        // fast return
+        if ty == fulfills {
+            return Ok(());
         }
-        return None
+
+        match fulfills {
+            // every type can be converted to any and bool
+            Type::Bool | Type::Any => return Ok(()),
+            // alias is only used when hoisting
+            Type::Alias(_) => unreachable!("unresolved alias"),
+            Type::AnyObject => {
+                if ty.is_object() {
+                    return Ok(());
+                }
+            }
+            // these types must be strictly obayed
+            Type::Array(_)
+            | Type::Bigint
+            | Type::Enum(_)
+            | Type::Function(_)
+            | Type::Generic(_)
+            | Type::Map(_, _)
+            | Type::Null
+            | Type::Promise(_)
+            | Type::Regex
+            | Type::String
+            | Type::Symbol
+            | Type::Tuple(_)
+            | Type::Undefined => {}
+            // number and int are compatable
+            Type::Number | Type::Int => {
+                if ty == &Type::Number || ty == &Type::Int {
+                    return Ok(());
+                }
+            }
+            // a union requirement just have to fulill a single alternative
+            Type::Union(u) => {
+                // if ty is a union, all elements must respect fulfills
+                if let Type::Union(u) = ty {
+                    for t in u.iter() {
+                        self.type_check(span, t, fulfills)?;
+                    }
+                } else {
+                    // if ty fulfills any one of union, it is true
+                    if u.iter().any(|t| self.type_check(span, ty, t).is_ok()) {
+                        return Ok(());
+                    }
+                }
+            }
+            Type::Interface(iface) => {
+                let iface = self
+                    .context
+                    .interfaces
+                    .get(iface)
+                    .expect("invalid interface");
+
+                for im in &iface.implements {
+                    self.type_check(span, ty, &Type::Interface(*im))?;
+                }
+
+                for ex in &iface.extends {
+                    self.type_check(span, ty, &Type::Object(*ex))?;
+                }
+
+                for (name, attr) in &iface.properties {
+                    if let Some(attr_ty) = self.type_has_property(ty, name, false) {
+                        self.type_check(span, &attr_ty, &attr.ty)?;
+                    } else {
+                        if attr.optional {
+                            continue;
+                        }
+                        return Err(Error::syntax_error(
+                            span,
+                            format!(
+                                "Property '{}' is missing in type '' but required in type ''",
+                                name
+                            ),
+                        ));
+                    }
+                }
+
+                for (name, method) in &iface.methods {
+                    if let Some(attr) = self.type_has_property(ty, name, true) {
+                        if let Type::Function(func) = &attr {
+                            // this of function must be equal to ty
+                            if &func.this_ty != ty {
+                                return Err(Error::syntax_error(
+                                    span,
+                                    format!(
+                                        "Method '{}' is missing in type '' but required in type ''",
+                                        name
+                                    ),
+                                ));
+                            }
+                            if &func.params != &method.params {
+                                return Err(Error::syntax_error(
+                                    span,
+                                    format!("Method '{}' have incompatable arguments", name),
+                                ));
+                            }
+                            if &func.return_ty != &method.return_ty {
+                                return Err(Error::syntax_error(
+                                    span,
+                                    format!("Method '{}' have incompatable return types", name),
+                                ));
+                            }
+                        }
+                    } else {
+                        if method.optional {
+                            continue;
+                        }
+                        return Err(Error::syntax_error(
+                            span,
+                            format!(
+                                "Method '{}' is missing in type '' but required in type ''",
+                                name
+                            ),
+                        ));
+                    }
+                }
+                return Ok(());
+            }
+            Type::Object(class_id) => {
+                if let Type::Object(obj_ty_id) = ty {
+                    // fast return
+                    if obj_ty_id == class_id {
+                        return Ok(());
+                    }
+
+                    let obj_class = self.context.classes.get(obj_ty_id).expect("invalid class");
+
+                    // check the super type
+                    if let Some(super_class_id) = obj_class.extends {
+                        // super type must fulfil requirement
+                        return self.type_check(span, &Type::Object(super_class_id), fulfills);
+                    }
+                }
+            }
+            Type::Iterator(iter_elem) => {
+                if let Some(next_ty) =
+                    self.type_has_property(ty, &PropName::Ident("next".to_owned()), true)
+                {
+                    if let Type::Function(func) = &next_ty {
+                        if iter_elem.as_ref() == &func.return_ty {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+        return Err(Error::syntax_error(
+            span,
+            format!("type '' is not assignable to type ''"),
+        ));
+    }
+
+    pub fn type_has_property(&self, ty: &Type, prop: &PropName, method: bool) -> Option<Type> {
+        if let PropName::Ident(ident) = prop {
+            if ident == "toString" {
+                return Some(Type::Function(Box::new(FuncType {
+                    this_ty: Type::Any,
+                    params: Vec::new(),
+                    var_arg: false,
+                    return_ty: Type::String,
+                })));
+            }
+        }
+        match ty {
+            Type::Alias(_) => unreachable!(),
+            Type::Any => None,
+            Type::AnyObject => None,
+            Type::Iterator(_) => {
+                match prop {
+                    PropName::Ident(ident) => match ident.as_str() {
+                        "next" => todo!(),
+                        _ => {}
+                    },
+                    _ => {}
+                };
+                return None;
+            }
+            Type::Object(class) => {
+                let class = self.context.classes.get(class).expect("invalid class");
+                if method {
+                    if let Some((_id, func_ty)) = class.methods.get(prop) {
+                        return Some(Type::Function(Box::new(func_ty.clone())));
+                    }
+                }
+                if let Some(attr) = class.properties.get(prop) {
+                    return Some(attr.ty.clone());
+                }
+                if let Some((_id, func_ty)) = class.methods.get(prop) {
+                    return Some(Type::Function(Box::new(func_ty.clone())));
+                }
+                return None;
+            }
+            Type::Interface(id) => {
+                let iface = self.context.interfaces.get(id).expect("invalid interface");
+                if method {
+                    if let Some(m) = iface.methods.get(prop) {
+                        return Some(Type::Function(Box::new(FuncType {
+                            this_ty: Type::Interface(*id),
+                            params: m.params.clone(),
+                            var_arg: false,
+                            return_ty: m.return_ty.clone(),
+                        })));
+                    }
+                }
+                if let Some(attr) = iface.properties.get(prop) {
+                    return Some(attr.ty.clone());
+                }
+                if let Some(m) = iface.methods.get(prop) {
+                    return Some(Type::Function(Box::new(FuncType {
+                        this_ty: Type::Interface(*id),
+                        params: m.params.clone(),
+                        var_arg: false,
+                        return_ty: m.return_ty.clone(),
+                    })));
+                }
+                return None;
+            }
+            Type::Tuple(elems) => match prop {
+                PropName::Int(_) => Some(Type::Union(elems.clone())),
+                PropName::Ident(ident) => match ident.as_str() {
+                    "length" => Some(Type::Int),
+                    _ => None,
+                },
+                _ => None,
+            },
+            Type::Array(elem) => {
+                match prop {
+                    PropName::Int(_) => Some(elem.as_ref().clone()),
+                    PropName::Private(_) | PropName::String(_) => None,
+                    PropName::Ident(ident) => {
+                        match ident.as_str() {
+                            "length" => Some(Type::Int),
+                            "at" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::Int.union(Type::Undefined)],
+                                var_arg: false,
+                                return_ty: Type::Undefined.union(elem.as_ref().clone()),
+                            }))),
+                            "concat" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::Array(elem.clone())],
+                                var_arg: true,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "copyWithin" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    Type::Int,
+                                    Type::Int,
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "entries" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: Type::Iterator(Box::new(Type::Tuple(Box::new([
+                                    Type::Int,
+                                    elem.as_ref().clone(),
+                                ])))),
+                            }))),
+                            "every" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // the element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Bool,
+                            }))),
+                            "fill" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    elem.as_ref().clone(),
+                                    Type::Int.union(Type::Undefined),
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "filter" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "find" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone().union(Type::Undefined),
+                            }))),
+                            "findIndex" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Int,
+                            }))),
+                            "findLast" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone().union(Type::Undefined),
+                            }))),
+                            "findLastIndex" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Int,
+                            }))),
+                            "flat" => todo!(),
+                            "flatMap" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Array(elem.clone()),
+                                    })),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "forEach" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Undefined,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Undefined,
+                            }))),
+                            "includes" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    elem.as_ref().clone(),
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Bool,
+                            }))),
+                            "indexOf" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    elem.as_ref().clone(),
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Int,
+                            }))),
+                            "lastIndexOf" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    elem.as_ref().clone(),
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Int,
+                            }))),
+                            "join" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::String.union(Type::Undefined)],
+                                var_arg: false,
+                                return_ty: Type::String,
+                            }))),
+                            "keys" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: Type::Iterator(Box::new(Type::Int)),
+                            }))),
+                            "map" => todo!(),
+                            "pop" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone().union(Type::Undefined),
+                            }))),
+                            "push" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![elem.as_ref().clone()],
+                                var_arg: true,
+                                return_ty: Type::Int,
+                            }))),
+                            "reduce" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            elem.as_ref().clone(),
+                                            elem.as_ref().clone(),
+                                            Type::Int,
+                                        ],
+                                        var_arg: false,
+                                        return_ty: elem.as_ref().clone(),
+                                    })),
+                                    elem.as_ref().clone().union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone(),
+                            }))),
+                            "reduceRight" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            elem.as_ref().clone(),
+                                            elem.as_ref().clone(),
+                                            Type::Int,
+                                        ],
+                                        var_arg: false,
+                                        return_ty: elem.as_ref().clone(),
+                                    })),
+                                    elem.as_ref().clone().union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone(),
+                            }))),
+                            "reverse" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: Type::Undefined,
+                            }))),
+                            "shift" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: elem.as_ref().clone().union(Type::Undefined),
+                            }))),
+                            "slice" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    Type::Int.union(Type::Undefined),
+                                    Type::Int.union(Type::Undefined),
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "some" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // callback
+                                    Type::Function(Box::new(FuncType {
+                                        this_ty: Type::Any,
+                                        params: vec![
+                                            // current element
+                                            elem.as_ref().clone(),
+                                            // index
+                                            Type::Int,
+                                            // this array
+                                            Type::Array(elem.clone()),
+                                        ],
+                                        var_arg: false,
+                                        return_ty: Type::Bool,
+                                    })),
+                                    // this arg
+                                    Type::Any,
+                                ],
+                                var_arg: false,
+                                return_ty: Type::Bool,
+                            }))),
+                            "sort" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::Function(Box::new(FuncType {
+                                    this_ty: Type::Any,
+                                    params: vec![elem.as_ref().clone(), elem.as_ref().clone()],
+                                    var_arg: false,
+                                    return_ty: Type::Int,
+                                }))],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "splice" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // start
+                                    Type::Int,
+                                    // delete count
+                                    Type::Int.union(Type::Undefined),
+                                    // elements
+                                    elem.as_ref().clone(),
+                                ],
+                                var_arg: true,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "toReverse" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "toSorted" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::Function(Box::new(FuncType {
+                                    this_ty: Type::Any,
+                                    params: vec![elem.as_ref().clone(), elem.as_ref().clone()],
+                                    var_arg: false,
+                                    return_ty: Type::Int,
+                                }))],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "toSplice" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![
+                                    // start
+                                    Type::Int,
+                                    // delete count
+                                    Type::Int.union(Type::Undefined),
+                                    // elements
+                                    elem.as_ref().clone(),
+                                ],
+                                var_arg: true,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            "unshift" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![elem.as_ref().clone()],
+                                var_arg: true,
+                                return_ty: Type::Int,
+                            }))),
+                            "values" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![],
+                                var_arg: false,
+                                return_ty: Type::Iterator(elem.clone()),
+                            }))),
+                            "with" => Some(Type::Function(Box::new(FuncType {
+                                this_ty: Type::Array(elem.clone()),
+                                params: vec![Type::Int, elem.as_ref().clone()],
+                                var_arg: false,
+                                return_ty: Type::Array(elem.clone()),
+                            }))),
+                            _ => None,
+                        }
+                    }
+                    PropName::Symbol(sym) => match sym {
+                        Symbol::Iterator => Some(Type::Iterator(elem.clone())),
+                        Symbol::Unscopables => todo!(),
+                        _ => None,
+                    },
+                }
+            }
+            _ => None,
+        }
     }
 }

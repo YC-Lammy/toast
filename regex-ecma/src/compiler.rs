@@ -190,7 +190,28 @@ struct FunctionTranslater<'a>{
 }
 
 impl<'a> FunctionTranslater<'a>{
-    fn translate_disjunction(&mut self, disjunction: &Disjunction, forward: bool) -> Value{
+    fn store_cursor(&mut self, value: Value){
+        self.builder.ins().stack_store(value, self.cursor, 0);
+    }
+    fn add_cursor(&mut self, value: Value){
+        let current = self.builder.ins().stack_load(types::I64, self.cursor, 0);
+        let new = self.builder.ins().iadd(current, value);
+        self.builder.ins().stack_store(new, self.cursor, 0);
+    }
+    fn sub_cursor(&mut self, value: Value){
+        let current = self.builder.ins().stack_load(types::I64, self.cursor, 0);
+        let new = self.builder.ins().isub(current, value);
+        self.builder.ins().stack_store(new, self.cursor, 0);
+    }
+    fn cursor_less_then_zero(&mut self) -> Value{
+        let current = self.builder.ins().stack_load(types::I64, self.cursor, 0);
+        self.builder.ins().icmp_imm(IntCC::SignedLessThan, current, 0)
+    }
+    fn cursor(&mut self) -> Value{
+        self.builder.ins().stack_load(types::I64, self.cursor, 0)
+    }
+
+    fn translate_disjunction(&mut self, disjunction: &Disjunction, backward: bool) -> Value{
         // return true if empty
         if disjunction.alternatives.is_empty(){
             return self.builder.ins().iconst(types::I8, 1);
@@ -207,119 +228,164 @@ impl<'a> FunctionTranslater<'a>{
         // declare variable
         self.builder.declare_var(cursor_store, types::I64);
 
-        let mut i = 0;
+        if backward{
+            // goes backwards
+            for (i, alt) in disjunction.alternatives.iter().rev().enumerate(){
+                let original_cursor = self.cursor();
+                let success = self.translate_alternative(alt, true);
 
-        // translate all alternatives
-        for alt in &disjunction.alternatives{
+                let current_cursor = self.cursor();
+                // reset cursor if fail
+                let new_cursor = self.builder.ins().select(success, current_cursor, original_cursor);
 
-            // load the cursor to variable
-            let c = self.cursor();
-            self.builder.def_var(cursor_store, c);
+                self.store_cursor(new_cursor);
 
-            // translate the match
-            let succeed = self.translate_alternative(alt, forward);
+                // first alternative
+                if i + 1 == disjunction.alternatives.len(){
+                    self.builder.ins().jump(exit, &[success]);
+                } else{
+                    let next_block = self.builder.create_block();
 
-            i += 1;
-            // last block
-            if i == disjunction.alternatives.len(){
-                // jump to exit and seal block
-                self.builder.ins().jump(exit, &[succeed]);
-                self.builder.seal_block(self.builder.current_block().unwrap());
-
-            } else{
-
-                // create new block for next iteration
-                let new_block = self.builder.create_block();
-
-                // load the old and new cursor
-                let old_cursor = self.builder.use_var(cursor_store);
-                let current_cursor = self.builder.ins().stack_load(types::I64, self.cursor, 0);
-
-                // retain current cursor if succeed
-                let new_cursor = self.builder.ins().select(succeed, current_cursor, old_cursor);
-                self.builder.ins().stack_store(new_cursor, self.cursor, 0);
-
-                // exit if failed
-                self.builder.ins().brif(
-                    succeed, 
-                    exit, 
-                    &[succeed], 
-                    new_block, 
-                    &[]
-                );
-                self.builder.seal_block(self.builder.current_block().unwrap());
-
-                // switch to block
-                self.builder.switch_to_block(new_block);
+                    self.builder.ins().brif(
+                        success, 
+                        exit, 
+                        &[success], 
+                        next_block, 
+                        &[]
+                    );
+                    
+                    self.builder.seal_block(next_block);
+                    self.builder.switch_to_block(next_block);
+                }
             }
-        };
+        } else{
+            // goes in order
+            for (i, alt) in disjunction.alternatives.iter().enumerate(){
+                let original_cursor = self.cursor();
+                let success = self.translate_alternative(alt, true);
 
-        // exit block
+                let current_cursor = self.cursor();
+                // reset cursor if fail
+                let new_cursor = self.builder.ins().select(success, current_cursor, original_cursor);
+
+                self.store_cursor(new_cursor);
+
+                // last alternative
+                if i + 1 == disjunction.alternatives.len(){
+                    self.builder.ins().jump(exit, &[success]);
+                } else{
+                    let next_block = self.builder.create_block();
+
+                    self.builder.ins().brif(
+                        success, 
+                        exit, 
+                        &[success], 
+                        next_block, 
+                        &[]
+                    );
+                    
+                    self.builder.seal_block(next_block);
+                    self.builder.switch_to_block(next_block);
+                }
+            }
+        }
+
+        self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
         let succeed = self.builder.block_params(exit)[0];
 
         return succeed;
     }
 
-    fn translate_alternative(&mut self, alternative: &Alternative, forward: bool) -> Value{
+    fn translate_alternative(&mut self, alternative: &Alternative, backward: bool) -> Value{
+        // there is no terms, always matches
         if alternative.terms.is_empty(){
             return self.builder.ins().iconst(types::I8, 1);
         }
 
+        // exit
         let exit = self.builder.create_block();
         self.builder.append_block_param(exit, types::I8);
 
-        let mut i = 0;
-
-        for term in &alternative.terms{
-            let succeed = match term{
-                Term::Assertion(a) => {
-                    self.translate_assertion(a)
-                }
-                Term::Atom { atom, quantifier } => {
-                    if let Some(quantifier) = quantifier{
-                        self.translate_atom_quantifier(atom, quantifier)
-                    } else{
-                        self.translate_atom(atom)
+        if backward{
+            for (i, term) in alternative.terms.iter().rev().enumerate(){
+                let succeed = match term{
+                    Term::Assertion(a) => {
+                        self.translate_assertion(a)
                     }
+                    Term::Atom { atom, quantifier } => {
+                        if let Some(quantifier) = quantifier{
+                            self.translate_atom_quantifier(atom, quantifier)
+                        } else{
+                            self.translate_atom(atom)
+                        }
+                    }
+                };
+                // last term
+                if i + 1 == alternative.terms.len(){
+                    self.builder.ins().jump(exit, &[succeed]);
+                    self.builder.seal_block(self.builder.current_block().unwrap());
+    
+                } else{
+                    // create new block for next iteration
+                    let next_block = self.builder.create_block();
+    
+                    // goto next block if succeed
+                    self.builder.ins().brif(
+                        succeed, 
+                        next_block, 
+                        &[], 
+                        exit, 
+                        &[succeed]
+                    );
+                    self.builder.seal_block(next_block);
+                    self.builder.switch_to_block(next_block);
+    
                 }
             };
+        } else {
+            for (i, term) in alternative.terms.iter().enumerate(){
+                let succeed = match term{
+                    Term::Assertion(a) => {
+                        self.translate_assertion(a)
+                    }
+                    Term::Atom { atom, quantifier } => {
+                        if let Some(quantifier) = quantifier{
+                            self.translate_atom_quantifier(atom, quantifier)
+                        } else{
+                            self.translate_atom(atom)
+                        }
+                    }
+                };
+                // last term
+                if i + 1 == alternative.terms.len(){
+                    self.builder.ins().jump(exit, &[succeed]);
+                    self.builder.seal_block(self.builder.current_block().unwrap());
 
-            i += 1;
+                } else{
+                    // create new block for next iteration
+                    let next_block = self.builder.create_block();
 
-            // last term
-            if i == alternative.terms.len(){
-                self.builder.ins().jump(exit, &[succeed]);
-                self.builder.seal_block(self.builder.current_block().unwrap());
+                    // goto next block if succeed
+                    self.builder.ins().brif(
+                        succeed, 
+                        next_block, 
+                        &[], 
+                        exit, 
+                        &[succeed]
+                    );
+                    self.builder.seal_block(next_block);
+                    self.builder.switch_to_block(next_block);
 
-            } else{
-                // create new block for next iteration
-                let next_block = self.builder.create_block();
+                }
+            };
+        }
 
-                // goto next block if succeed
-                self.builder.ins().brif(
-                    succeed, 
-                    next_block, 
-                    &[], 
-                    exit, 
-                    &[succeed]
-                );
-                self.builder.seal_block(self.builder.current_block().unwrap());
-
-                // switch to next block
-                self.builder.switch_to_block(next_block);
-
-            }
-        };
-
+        self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
         let succeed = self.builder.block_params(exit)[0];
 
         return succeed
-    }
-
-    fn cursor(&mut self) -> Value{
-        self.builder.ins().stack_load(types::I64, self.cursor, 0)
     }
 
     /// returns an i8 value
@@ -394,10 +460,10 @@ impl<'a> FunctionTranslater<'a>{
                     last_byte
                 ]
             );
-            self.builder.seal_block(self.builder.current_block().unwrap());
         }
 
         // two bytes
+        self.builder.seal_block(two_byte_block);
         self.builder.switch_to_block(two_byte_block);
 
         {
@@ -425,10 +491,10 @@ impl<'a> FunctionTranslater<'a>{
                     ch, two
                 ]
             );
-            self.builder.seal_block(two_byte_block);
         }
 
         // three byte block
+        self.builder.seal_block(three_byte_block);
         self.builder.switch_to_block(three_byte_block);
 
         {
@@ -458,10 +524,10 @@ impl<'a> FunctionTranslater<'a>{
                     ch, three
                 ]
             );
-            self.builder.seal_block(three_byte_block);
         };
         
         // four byte block
+        self.builder.seal_block(four_byte_block);
         self.builder.switch_to_block(four_byte_block);
 
         {
@@ -487,9 +553,9 @@ impl<'a> FunctionTranslater<'a>{
                     ch, four
                 ]
             );
-            self.builder.seal_block(three_byte_block);
         };
 
+        self.builder.seal_block(exit);
         self.builder.switch_to_block(exit);
 
         let char_code = self.builder.block_params(exit)[0];
@@ -504,13 +570,41 @@ impl<'a> FunctionTranslater<'a>{
                 let cursor = self.cursor();
                 let is_cursor_zero = self.builder.ins().icmp_imm(IntCC::Equal, cursor, 0);
 
+                // an additional step to check for line terminator is required if m flag
                 if self.multiline{
-                    let (last_char, _char_len) = self.lookback_char();
+                    let exit = self.builder.create_block();
+                    self.builder.append_block_param(exit, types::I8);
 
-                    let is_line_break = self.builder.ins().icmp_imm(IntCC::Equal, last_char, '\n' as i64);
+                    let cmp_block = self.builder.create_block();
 
-                    return self.builder.ins().bor(is_cursor_zero, is_line_break)
+                    // branch to exit if cursor is zero
+                    self.builder.ins().brif(
+                        is_cursor_zero, 
+                        exit, 
+                        &[is_cursor_zero], 
+                        cmp_block, 
+                        &[]
+                    );
+                    self.builder.seal_block(cmp_block);
+                    self.builder.switch_to_block(cmp_block);
+
+                    // cmp block
+                    {
+                        let (last_char, _char_len) = self.lookback_char();
+
+                        let is_line_break = self.builder.ins().icmp_imm(IntCC::Equal, last_char, '\n' as i64);
+
+                        self.builder.ins().jump(exit, &[is_line_break]);
+
+                    }
+                    
+                    self.builder.seal_block(exit);
+                    self.builder.switch_to_block(exit);
+
+                    let is_beginning = self.builder.block_params(exit)[0];
+                    return is_beginning
                 } else{
+                    // not multiline aware, 
                     return is_cursor_zero
                 }
             },

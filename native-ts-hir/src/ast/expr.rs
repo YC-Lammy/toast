@@ -1,3 +1,5 @@
+use swc_common::Span;
+
 use crate::common::{ClassId, FunctionId, VariableId};
 use crate::{PropName, Symbol};
 
@@ -43,9 +45,32 @@ pub enum AssignOp {
     NullishAssign,
 }
 
-impl From<swc_ecmascript::ast::AssignOp> for AssignOp{
+impl AssignOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AddAssign => "+=",
+            Self::AndAssign => "&&=",
+            Self::BitAndAssign => "&=",
+            Self::BitOrAssign => "|=",
+            Self::BitXorAssign => "^=",
+            Self::DivAssign => "/=",
+            Self::ExpAssign => "**=",
+            Self::LShiftAssign => "<<=",
+            Self::ModAssign => "%=",
+            Self::MulAssign => "*=",
+            Self::NullishAssign => "??=",
+            Self::RShiftAssign => ">>=",
+            Self::SubAssign => "-=",
+            Self::ZeroFillRShiftAssign => ">>>=",
+            Self::OrAssign => "||=",
+            Self::Assign => "=",
+        }
+    }
+}
+
+impl From<swc_ecmascript::ast::AssignOp> for AssignOp {
     fn from(value: swc_ecmascript::ast::AssignOp) -> Self {
-        match value{
+        match value {
             swc_ecmascript::ast::AssignOp::AddAssign => Self::AddAssign,
             swc_ecmascript::ast::AssignOp::AndAssign => Self::AndAssign,
             swc_ecmascript::ast::AssignOp::BitAndAssign => Self::BitAndAssign,
@@ -61,7 +86,7 @@ impl From<swc_ecmascript::ast::AssignOp> for AssignOp{
             swc_ecmascript::ast::AssignOp::SubAssign => Self::SubAssign,
             swc_ecmascript::ast::AssignOp::ZeroFillRShiftAssign => Self::ZeroFillRShiftAssign,
             swc_ecmascript::ast::AssignOp::Assign => Self::Assign,
-            swc_ecmascript::ast::AssignOp::OrAssign => Self::OrAssign
+            swc_ecmascript::ast::AssignOp::OrAssign => Self::OrAssign,
         }
     }
 }
@@ -92,6 +117,37 @@ pub enum BinOp {
     BitAnd,
     Nullish,
     In,
+}
+
+impl BinOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::And => "&&",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::BitXor => "^",
+            Self::Div => "/",
+            Self::EqEq => "==",
+            Self::EqEqEq => "===",
+            Self::Exp => "**",
+            Self::Gt => ">",
+            Self::Gteq => ">=",
+            Self::In => "in",
+            Self::LShift => "<<",
+            Self::Lt => "<",
+            Self::Lteq => "<=",
+            Self::Mod => "%",
+            Self::Mul => "*",
+            Self::NotEq => "!=",
+            Self::NotEqEq => "!==",
+            Self::Nullish => "??",
+            Self::RShift => ">>",
+            Self::Sub => "-",
+            Self::URShift => ">>>",
+            Self::Or => "||",
+        }
+    }
 }
 
 impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
@@ -138,18 +194,18 @@ pub enum UpdateOp {
     SuffixSub,
 }
 
-pub enum Callee{
+pub enum Callee {
     Function(FunctionId),
-    Member(Expr, PropName),
+    Member(Expr, PropNameOrExpr),
     Expr(Expr),
     Super(ClassId),
 }
 
-impl Callee{
-    pub fn is_member(&self) -> bool{
-        match self{
+impl Callee {
+    pub fn is_member(&self) -> bool {
+        match self {
             Self::Member(_, _) => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -164,50 +220,80 @@ pub enum UnaryOp {
     Plus,
 }
 
+impl UnaryOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BitNot => "~",
+            Self::LogicalNot => "!",
+            Self::Minus => "-",
+            Self::Plus => "+",
+            Self::Typeof => "typeof",
+            Self::Void => "void",
+        }
+    }
+}
+
+pub enum PropNameOrExpr {
+    PropName(PropName),
+    Expr(Box<Expr>, Type),
+}
+
 pub enum Expr {
     Undefined,
     Null,
     Bool(bool),
     Int(i32),
     Number(f64),
+    /// loads an i128
+    Bigint(i128),
+    /// loads a string
     String(String),
+    /// loads a symbol
     Symbol(Symbol),
-    Regex {},
+    Regex(),
+    /// function is a static and is initialised
     Function(FunctionId),
+    /// a closure captures variables
+    Closure(FunctionId),
+    /// read the this binding
     This,
+    /// constructs an array
     Array {
         values: Vec<Expr>,
     },
+    /// constructs a tuple
+    Tuple {
+        values: Vec<Expr>,
+    },
+    /// constructs a class
     New {
         class: ClassId,
         args: Vec<Expr>,
     },
+    /// calls a function
     Call {
         callee: Box<Callee>,
         args: Vec<Expr>,
-        optchain: bool,
+        optional: bool,
     },
     /// returns a reference
     Member {
         object: Box<Expr>,
-        key: PropName,
-    },
-    /// returns a reference | undefined
-    OptMember {
-        object: Box<Expr>,
-        key: PropName,
+        key: PropNameOrExpr,
+        optional: bool,
     },
     /// returns the value with member type
     MemberAssign {
         op: AssignOp,
         object: Box<Expr>,
-        key: PropName,
+        key: PropNameOrExpr,
         value: Box<Expr>,
     },
+    /// increments or decrements the property
     MemberUpdate {
         op: UpdateOp,
         object: Box<Expr>,
-        key: PropName,
+        key: PropNameOrExpr,
     },
     /// returns the value with variable type
     VarAssign {
@@ -217,6 +303,7 @@ pub enum Expr {
     },
     /// returns the loaded value
     VarLoad {
+        span: Span,
         variable: VariableId,
     },
     /// returns the value with
@@ -224,23 +311,34 @@ pub enum Expr {
         op: UpdateOp,
         variable: VariableId,
     },
+    /// binary operations
     Bin {
         op: BinOp,
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// unary operations
     Unary {
         op: UnaryOp,
         value: Box<Expr>,
     },
+    /// selects right if test is nullish else left
     Ternary {
         test: Box<Expr>,
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// performs expression and returns last value
     Seq(Box<Expr>, Box<Expr>),
-
+    /// async wait
     Await(Box<Expr>),
+    /// yields from generator
     Yield(Box<Expr>),
+
+    /// cast a value to another type.
+    /// type of value must be compatable with Type
     Cast(Box<Expr>, Type),
+    /// assertion that value is not null.
+    /// this may panic at runtime if value is null or undefined
+    AssertNonNull(Box<Expr>),
 }

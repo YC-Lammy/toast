@@ -13,3 +13,5 @@ swc_atoms = "*"
 ureq = "2.8"
 
 log = "0.4"
+toml = "^0.8"
+serde = "^1.0"

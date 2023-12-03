@@ -1,6 +1,6 @@
 use crate::common::{ClassId, FunctionId, InterfaceId, VariableId};
 
-use super::Expr;
+use super::{Expr, Type};
 
 pub enum Stmt {
     DeclareClass(ClassId),
@@ -11,25 +11,37 @@ pub enum Stmt {
     DeclareGenericInterface(InterfaceId),
     DeclareGenericFunction(FunctionId),
 
-    DeclareVar(VariableId),
+    DeclareVar(VariableId, Type),
     DropVar(VariableId),
 
-    Block {
-        label: Option<String>,
-        body: Vec<Stmt>,
-    },
-    If {
-        test: Expr,
-        body: Vec<Stmt>,
-        else_: Vec<Stmt>,
-    },
-    Loop {
-        label: Option<String>,
-        body: Vec<Stmt>,
-    },
+    Block { label: String },
+    EndBlock,
+    If { test: Expr },
+    EndIf,
+    Else,
+    EndElse,
+
+    Switch(Expr),
+    SwitchCase(Expr),
+    EndSwitchCase,
+    DefaultCase,
+    EndDefaultCase,
+    EndSwitch,
+
+    Loop { label: Option<String> },
+    EndLoop,
+
+    Try,
+    EndTry,
+    Catch(VariableId, Type),
+    EndCatch,
+    Finally,
+    EndFinally,
 
     Break(Option<String>),
     Continue(Option<String>),
 
     Return(Expr),
+    Throw(Expr),
+    Expr(Expr),
 }

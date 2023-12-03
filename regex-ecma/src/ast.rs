@@ -109,9 +109,11 @@ pub enum Atom {
         index: u32,
         disjunction: Disjunction
     },
+    /// back reference
     BackReferenceIndex{
         index: u32,
     },
+    /// back reference
     BackReferenceNamed{
         name: String
     },
@@ -131,6 +133,7 @@ pub enum CharacterClassEscape {
     Alphanumeric,
     /// \W
     NonAlphanumeric,
+    /// a unicode property
     Property(UnicodePropertyValue),
 }
 
@@ -153,6 +156,7 @@ pub enum ClassRange{
     Char(char),
     /// a-z
     Range(char, char),
+    /// a backspace character
     Backspace,
     CharacterClassEscape(CharacterClassEscape),
 }

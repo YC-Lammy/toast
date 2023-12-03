@@ -48,3 +48,9 @@ var car = new Car;
 
 let i = 0;
 i = i + 1;
+
+let r:[number, string, bigint] = [0, "", 330n];
+
+for (var e of r){
+
+}

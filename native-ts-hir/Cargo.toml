@@ -9,6 +9,7 @@ edition = "2021"
 native-js-common = {path="../native-js-common"}
 native-ts-parser = {path = "../native-ts-parser"}
 
+itoa = "1"
 num-traits = "*"
 itertools = "*"
 

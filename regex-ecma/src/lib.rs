@@ -3,10 +3,10 @@
 extern crate alloc;
 
 mod ast;
-mod compiler;
+pub mod compiler;
 //pub mod parser;
 pub mod pest_parser;
-//pub mod ir;
+pub mod ir;
 //pub mod clousure;
 
 mod optimise;

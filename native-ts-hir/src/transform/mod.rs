@@ -1,11 +1,15 @@
 mod class;
 mod context;
 mod expr;
-mod module;
-mod types;
 mod function;
+mod module;
+mod stmt;
+mod types;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use context::*;
 
@@ -14,15 +18,18 @@ use swc_common::Span;
 use swc_ecmascript::ast as swc;
 
 use crate::{
-    ast::Type,
-    common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId},
+    ast::{self, Expr, Function, FunctionParam, ModuleExport, Stmt, Type},
+    common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, VariableId},
+    PropName,
 };
 
 type Result<T> = std::result::Result<T, Error<Span>>;
 
-pub enum TypeCheck {
-    Implements { span: Span, ty: Type, iface: Type },
-    Extends { span: Span, ty: Type, extends: Type },
+/// span, ty, fulfills
+struct TypeCheck {
+    span: Span,
+    ty: Type,
+    fulfills: Type,
 }
 
 pub struct Transformer {
@@ -31,15 +38,31 @@ pub struct Transformer {
     /// contains scope and definitions
     context: Context,
 
+    break_labels: HashSet<String>,
+    continue_labels: HashSet<String>,
+
     /// the current this type
     this_ty: Type,
+    return_ty: Type,
     /// the current super class
     super_class: Option<ClassId>,
     /// indicates if current context is constructor
-    is_in_constructor: bool
+    is_in_constructor: bool,
 }
 
 impl Transformer {
+    pub fn new() -> Self {
+        Self {
+            type_checks: Vec::new(),
+            context: Context::new(),
+            break_labels: Default::default(),
+            continue_labels: Default::default(),
+            this_ty: Type::Any,
+            return_ty: Type::Undefined,
+            super_class: None,
+            is_in_constructor: false,
+        }
+    }
     pub fn anonymous_name(&self) -> String {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -49,12 +72,21 @@ impl Transformer {
     }
 
     pub fn transform_module(&mut self, module: swc::Module) -> Result<crate::ast::Module> {
+        let mut export_default = ModuleExport::Undefined;
+        let mut module_exports = HashMap::new();
+
         for i in &module.body {
             if let swc::ModuleItem::ModuleDecl(swc::ModuleDecl::ExportDefaultDecl(d)) = i {
                 let re = match &d.decl {
-                    swc::DefaultDecl::Class(c) => self.hoist_class(None, &c.class),
-                    swc::DefaultDecl::Fn(f) => self.hoist_function(None, &f.function),
-                    swc::DefaultDecl::TsInterfaceDecl(i) => self.hoist_interface(None, &i),
+                    swc::DefaultDecl::Class(c) => {
+                        self.hoist_class(c.ident.as_ref().map(|id| id.sym.as_ref()), &c.class)
+                    }
+                    swc::DefaultDecl::Fn(f) => {
+                        self.hoist_function(f.ident.as_ref().map(|id| id.sym.as_ref()), &f.function)
+                    }
+                    swc::DefaultDecl::TsInterfaceDecl(i) => {
+                        self.hoist_interface(Some(&i.id.sym), &i)
+                    }
                 };
 
                 if let Err(e) = re {
@@ -77,7 +109,189 @@ impl Transformer {
             }
         }))?;
 
-        todo!()
+        for item in &module.body {
+            match item {
+                swc::ModuleItem::ModuleDecl(d) => match d {
+                    swc::ModuleDecl::ExportDefaultDecl(decl) => match &decl.decl {
+                        swc::DefaultDecl::Class(c) => {
+                            let id = c
+                                .ident
+                                .as_ref()
+                                .map(|id| self.context.get_class_id(&id.sym))
+                                .unwrap_or(ClassId::new());
+                            self.translate_class(id, &c.class)?;
+                            self.context.func().stmts.push(Stmt::DeclareClass(id));
+
+                            export_default = ModuleExport::Class(id);
+                        }
+                        swc::DefaultDecl::Fn(f) => {
+                            let id = f
+                                .ident
+                                .as_ref()
+                                .map(|id| self.context.get_func_id(&id.sym))
+                                .unwrap_or(FunctionId::new());
+                            self.translate_function(id, &f.function)?;
+                            self.context.func().stmts.push(Stmt::DeclareFunction(id));
+
+                            export_default = ModuleExport::Function(id);
+                        }
+                        swc::DefaultDecl::TsInterfaceDecl(i) => {
+                            let id = self.context.get_interface_id(&i.id.sym);
+                            self.context.func().stmts.push(Stmt::DeclareInterface(id));
+
+                            export_default = ModuleExport::Interface(id);
+                        }
+                    },
+                    swc::ModuleDecl::ExportDefaultExpr(expr) => {
+                        let varid = VariableId::new();
+                        let (expr, ty) = self.translate_expr(&expr.expr, None)?;
+                        self.context
+                            .func()
+                            .stmts
+                            .push(Stmt::DeclareVar(varid, ty.clone()));
+                        self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            variable: varid,
+                            value: Box::new(expr),
+                        }));
+
+                        export_default = ModuleExport::Var(varid, ty);
+                    }
+                    swc::ModuleDecl::ExportDecl(decl) => {
+                        self.translate_decl(&decl.decl)?;
+                    }
+                    swc::ModuleDecl::ExportNamed(n) => {
+                        if let Some(src) = &n.src {
+                            let module_id = self.find_module(&src.value);
+
+                            for s in &n.specifiers {
+                                match s {
+                                    swc::ExportSpecifier::Namespace(n) => {
+                                        let name = self.translate_module_export_name(&n.name);
+                                        module_exports
+                                            .insert(name, ModuleExport::NameSpace(module_id));
+                                    }
+                                    swc::ExportSpecifier::Default(d) => {
+                                        let name = PropName::Ident(d.exported.sym.to_string());
+                                        module_exports
+                                            .insert(name, self.module_default_export(module_id));
+                                    }
+                                    swc::ExportSpecifier::Named(n) => {
+                                        let origin_name =
+                                            self.translate_module_export_name(&n.orig);
+                                        let module_export =
+                                            self.module_export(module_id, &origin_name);
+
+                                        if module_export.is_none() {
+                                            return Err(Error::syntax_error(
+                                                n.span,
+                                                format!(
+                                                    "module '{}' has no export '{}'",
+                                                    src.value, origin_name
+                                                ),
+                                            ));
+                                        }
+                                        let module_export = module_export.unwrap();
+
+                                        let exported_name = if let Some(exported) = &n.exported {
+                                            self.translate_module_export_name(exported)
+                                        } else {
+                                            origin_name
+                                        };
+
+                                        if n.is_type_only {
+                                            match &module_export {
+                                                ModuleExport::Var(_, _)
+                                                | ModuleExport::NameSpace(_) => {
+                                                    return Err(Error::syntax_error(
+                                                        n.span,
+                                                        "type only export can only export type",
+                                                    ))
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+
+                                        module_exports.insert(exported_name, module_export);
+                                    }
+                                }
+                            }
+                        } else {
+                            for s in &n.specifiers {
+                                match s {
+                                    swc::ExportSpecifier::Named(n) => {
+                                        let origin_name = match &n.orig {
+                                            swc::ModuleExportName::Ident(id) => id.sym.to_string(),
+                                            swc::ModuleExportName::Str(_) => unimplemented!(),
+                                        };
+
+                                        let binding = if let Some(bind) =
+                                            self.context.find(&origin_name)
+                                        {
+                                            bind
+                                        } else {
+                                            return Err(Error::syntax_error(
+                                                n.span,
+                                                format!("undefined identifier '{}'", origin_name),
+                                            ));
+                                        };
+
+                                        let export = match binding {
+                                            Binding::Class(c) => ModuleExport::Class(*c),
+                                            Binding::GenericClass(_) => todo!("export generic"),
+                                            Binding::Enum(e) => ModuleExport::Enum(*e),
+                                            Binding::Function(f) => ModuleExport::Function(*f),
+                                            Binding::GenericFunction(_) => todo!("export generic"),
+                                            Binding::Generic(_) => unreachable!(),
+                                            Binding::Interface(i) => ModuleExport::Interface(*i),
+                                            Binding::GenericInterface(_) => todo!("export generic"),
+                                            Binding::TypeAlias(id) => ModuleExport::Alias(*id),
+                                            Binding::GenericTypeAlias(_) => todo!("export generic"),
+                                            Binding::Using { .. } => todo!("export using"),
+                                            Binding::Var { id, ty, .. } => {
+                                                ModuleExport::Var(*id, ty.clone())
+                                            }
+                                            Binding::NameSpace(n) => ModuleExport::NameSpace(*n),
+                                        };
+
+                                        let exported_name = if let Some(exported) = &n.exported {
+                                            self.translate_module_export_name(exported)
+                                        } else {
+                                            PropName::Ident(origin_name)
+                                        };
+
+                                        module_exports.insert(exported_name, export);
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                swc::ModuleItem::Stmt(s) => {
+                    // translate statement
+                    self.translate_stmt(s, None)?;
+                }
+            }
+        }
+
+        // finish up type checks
+        for check in &self.type_checks {
+            self.type_check(check.span, &check.ty, &check.fulfills)?;
+        }
+
+        let main = self.context.end_function();
+
+        return Ok(ast::Module {
+            functions: core::mem::replace(&mut self.context.functions, Default::default()),
+            classes: core::mem::replace(&mut self.context.classes, Default::default()),
+            interfaces: core::mem::replace(&mut self.context.interfaces, Default::default()),
+            enums: core::mem::replace(&mut self.context.enums, Default::default()),
+            main_function: main,
+            default_export: export_default,
+            exports: module_exports,
+        });
     }
 
     pub fn hoist_stmts<'a, I: Iterator<Item = &'a swc::Stmt> + Clone>(
@@ -110,9 +324,7 @@ impl Transformer {
                     // translate later
                     self.hoist_alias(&alias.id.sym, alias)?;
                 }
-                swc::Decl::Var(_) => {
-
-                }
+                swc::Decl::Var(_) => {}
                 // do not hoist using
                 swc::Decl::Using(_) => {}
             }
@@ -181,22 +393,22 @@ impl Transformer {
                     _ => unreachable!(),
                 };
             }
-        };
+        }
 
         // finish translating type and normalise them
         self.normalise_types();
 
         // hoist variables
-        for decl in stmts.clone(){
-            if let swc::Decl::Var(v) = decl{
+        for decl in stmts.clone() {
+            if let swc::Decl::Var(v) = decl {
                 self.hoist_vardecl(v)?;
             }
         }
 
         // translate functions
-        for decl in stmts{
-            if let swc::Decl::Fn(func) = decl{
-                match self.context.find(&func.ident.sym){
+        for decl in stmts {
+            if let swc::Decl::Fn(func) = decl {
+                match self.context.find(&func.ident.sym) {
                     Some(Binding::Function(id)) => {
                         let id = *id;
                         self.translate_function(id, &func.function)?;
@@ -204,7 +416,7 @@ impl Transformer {
                     Some(Binding::GenericFunction(_id)) => {
                         todo!("generic function")
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
         }
@@ -245,6 +457,28 @@ impl Transformer {
             {
                 return Err(Error::syntax_error(func.span, "duplicated identifier"));
             }
+
+            let f = self.translate_function_ty(func)?;
+
+            // insert the function type
+            self.context.functions.insert(
+                id,
+                Function {
+                    this_ty: f.this_ty,
+                    params: f
+                        .params
+                        .into_iter()
+                        .map(|ty| FunctionParam {
+                            id: VariableId::new(),
+                            ty: ty,
+                        })
+                        .collect(),
+                    return_ty: f.return_ty,
+                    variables: Default::default(),
+                    captures: Vec::new(),
+                    stmts: Vec::new(),
+                },
+            );
         }
         return Ok(());
     }
@@ -307,8 +541,8 @@ impl Transformer {
         return Ok(());
     }
 
-    pub fn hoist_vardecl(&mut self, decl: &swc::VarDecl) -> Result<()>{
-        return Ok(())
+    pub fn hoist_vardecl(&mut self, _decl: &swc::VarDecl) -> Result<()> {
+        return Ok(());
     }
 
     pub fn normalise_types(&mut self) {
@@ -385,6 +619,9 @@ impl Transformer {
                     self.normalise_type(ty);
                 }
             }
+            Type::Iterator(ty) => {
+                self.normalise_type(ty);
+            }
             Type::Union(u) => {
                 for i in u.iter_mut() {
                     self.normalise_type(i);
@@ -432,7 +669,7 @@ impl Transformer {
             | Type::String
             | Type::Symbol
             | Type::Undefined
-            | Type::Interface(_) 
+            | Type::Interface(_)
             | Type::Generic(_) => {}
         }
     }

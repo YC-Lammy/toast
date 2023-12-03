@@ -1,13 +1,10 @@
-pub mod typed_hir;
-pub mod untyped_hir;
-
-mod ast;
+pub mod ast;
 mod common;
-mod context;
 pub mod transform;
+mod checks;
+mod symbol_table;
 
-pub mod ast_transform;
-pub mod passes;
+//pub mod passes;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

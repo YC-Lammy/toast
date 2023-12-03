@@ -5,6 +5,7 @@ use crate::PropName;
 
 use super::Expr;
 
+#[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
     Any,
@@ -29,6 +30,8 @@ pub enum Type {
     Union(Box<[Type]>),
     Tuple(Box<[Type]>),
 
+    Iterator(Box<Type>),
+
     Alias(AliasId),
     Generic(GenericId),
 }
@@ -48,7 +51,16 @@ impl Type {
             return Type::Number;
         }
 
+        if other == Type::Int {
+            return self.union(Type::Number);
+        }
+
+        if self == Type::Int {
+            return Type::Number.union(other);
+        }
+
         match &self {
+            Type::Int => unreachable!(),
             Type::Any => return self,
             Type::AnyObject => match other {
                 Type::Number
@@ -67,7 +79,6 @@ impl Type {
             | Type::Function(_)
             | Type::Array(_)
             | Type::Bool
-            | Type::Int
             | Type::Interface(_)
             | Type::Null
             | Type::Number
@@ -80,7 +91,8 @@ impl Type {
             | Type::Tuple(_)
             | Type::Alias(_)
             | Type::Generic(_)
-            | Type::Undefined => Type::Union(Box::new([self, other])),
+            | Type::Undefined
+            | Type::Iterator(_) => Type::Union(Box::new([self, other])),
             Type::Union(u) => {
                 if u.contains(&other) {
                     return self;
@@ -98,6 +110,32 @@ impl Type {
                 return Type::Union(v.into_boxed_slice());
             }
         }
+    }
+
+    pub fn is_object(&self) -> bool {
+        match self {
+            Type::AnyObject
+            | Type::Array(_)
+            | Type::Function(_)
+            | Type::Interface(_)
+            | Type::Map(_, _)
+            | Type::Object(_)
+            | Type::Promise(_)
+            | Type::Regex
+            | Type::Tuple(_)
+            | Type::Iterator(_) => true,
+            Type::Union(u) => u.iter().all(Self::is_object),
+            _ => false,
+        }
+    }
+
+    pub fn flattened(&self) -> Type {
+        match self {
+            Type::Array(_) => {}
+            Type::Tuple(_) => {}
+            _ => {}
+        }
+        todo!()
     }
 }
 
@@ -117,27 +155,6 @@ pub struct GenericParam {
     pub extends: Option<ClassId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GenericFunctionType {
-    pub type_params: Vec<GenericParam>,
-    pub this_ty: GenericOrType,
-    pub params: GenericOrType,
-    pub return_ty: GenericType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GenericType {
-    Class(ClassId),
-    Interface(InterfaceId),
-    Function(Box<GenericFunctionType>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GenericOrType {
-    Generic(GenericId),
-    Type(Type),
-}
-
 pub struct PropertyDesc {
     pub ty: Type,
     pub readonly: bool,
@@ -151,20 +168,32 @@ pub struct ClassType {
     pub extends: Option<ClassId>,
     pub implements: Vec<InterfaceId>,
 
-    pub constructor: Option<FunctionId>,
-    
+    pub constructor: Option<(FunctionId, FuncType)>,
+
     /// static properties are just global variables
     pub static_properties: HashMap<PropName, (VariableId, Type)>,
     /// static methods are just static functions
     pub static_methods: HashMap<PropName, (FunctionId, FuncType)>,
     /// static generic methods are just generic functions
-    pub static_generic_methods: HashMap<PropName, (FunctionId, )>,
+    pub static_generic_methods: HashMap<PropName, (FunctionId,)>,
 
     pub properties: HashMap<PropName, PropertyDesc>,
     pub methods: HashMap<PropName, (FunctionId, FuncType)>,
-    pub generic_methods: HashMap<PropName, (FunctionId, )>,
+    pub generic_methods: HashMap<PropName, (FunctionId,)>,
 }
 
+pub struct InterfacePropertyDesc {
+    pub ty: Type,
+    pub readonly: bool,
+    pub optional: bool,
+}
+
+pub struct InterfaceMethod {
+    pub readonly: bool,
+    pub optional: bool,
+    pub params: Vec<Type>,
+    pub return_ty: Type,
+}
 #[derive(Default)]
 pub struct InterfaceType {
     pub name: String,
@@ -172,7 +201,8 @@ pub struct InterfaceType {
     pub extends: Vec<ClassId>,
     pub implements: Vec<InterfaceId>,
 
-    pub properties: HashMap<PropName, PropertyDesc>,
+    pub properties: HashMap<PropName, InterfacePropertyDesc>,
+    pub methods: HashMap<PropName, InterfaceMethod>,
 }
 
 pub struct EnumVariantDesc {
@@ -183,4 +213,20 @@ pub struct EnumType {
     pub name: String,
 
     pub variants: Vec<EnumVariantDesc>,
+}
+
+pub enum StructProperty{
+    Method{
+        params: Box<[Type]>,
+        vararg: bool,
+        return_ty: Type
+    },
+    Property{
+        readonly: bool,
+        ty: Type
+    }
+}
+
+pub struct StructType{
+    pub properties: HashMap<PropName, StructProperty>,
 }
