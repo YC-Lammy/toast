@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::{AliasId, ClassId, EnumId, FunctionId, GenericId, InterfaceId, VariableId};
-use crate::PropName;
+use crate::{PropName, Symbol};
 
 use super::Expr;
 
@@ -62,18 +62,13 @@ impl Type {
         match &self {
             Type::Int => unreachable!(),
             Type::Any => return self,
-            Type::AnyObject => match other {
-                Type::Number
-                | Type::String
-                | Type::Bool
-                | Type::Bigint
-                | Type::Symbol
-                | Type::Null
-                | Type::Undefined => return Type::Union(Box::new([self, other])),
-                Type::AnyObject => return Type::AnyObject,
-                Type::Any => return Type::Any,
-                _ => return Type::AnyObject,
-            },
+            Type::AnyObject => {
+                if other.is_object() {
+                    return Type::AnyObject;
+                } else {
+                    return Type::Union(Box::new([self, other]));
+                }
+            }
             Type::Bigint
             | Type::Enum(_)
             | Type::Function(_)
@@ -101,10 +96,24 @@ impl Type {
                 let mut v = Vec::with_capacity(u.len() + 1);
 
                 for ty in u.iter() {
-                    v.push(ty.clone())
+                    v.push(ty.clone());
+                    if ty == &Type::Any {
+                        return Type::Any;
+                    }
+                }
+                if let Type::Union(u) = other {
+                    for ty in u.iter() {
+                        if !v.contains(ty) {
+                            v.push(ty.clone());
+                            if ty == &Type::Any {
+                                return Type::Any;
+                            }
+                        }
+                    }
+                } else {
+                    v.push(other);
                 }
 
-                v.push(other);
                 v.sort();
 
                 return Type::Union(v.into_boxed_slice());
@@ -117,7 +126,6 @@ impl Type {
             Type::AnyObject
             | Type::Array(_)
             | Type::Function(_)
-            | Type::Interface(_)
             | Type::Map(_, _)
             | Type::Object(_)
             | Type::Promise(_)
@@ -155,19 +163,21 @@ pub struct GenericParam {
     pub extends: Option<ClassId>,
 }
 
+#[derive(Clone)]
 pub struct PropertyDesc {
     pub ty: Type,
     pub readonly: bool,
     pub initialiser: Option<Expr>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ClassType {
     pub name: String,
 
     pub extends: Option<ClassId>,
     pub implements: Vec<InterfaceId>,
 
+    /// class may not have constructor
     pub constructor: Option<(FunctionId, FuncType)>,
 
     /// static properties are just global variables
@@ -179,21 +189,25 @@ pub struct ClassType {
 
     pub properties: HashMap<PropName, PropertyDesc>,
     pub methods: HashMap<PropName, (FunctionId, FuncType)>,
+    /// not used
     pub generic_methods: HashMap<PropName, (FunctionId,)>,
 }
 
+#[derive(Debug)]
 pub struct InterfacePropertyDesc {
     pub ty: Type,
     pub readonly: bool,
     pub optional: bool,
 }
 
+#[derive(Debug)]
 pub struct InterfaceMethod {
     pub readonly: bool,
     pub optional: bool,
     pub params: Vec<Type>,
     pub return_ty: Type,
 }
+
 #[derive(Default)]
 pub struct InterfaceType {
     pub name: String,
@@ -215,18 +229,69 @@ pub struct EnumType {
     pub variants: Vec<EnumVariantDesc>,
 }
 
-pub enum StructProperty{
-    Method{
+pub enum StructProperty {
+    Method {
         params: Box<[Type]>,
         vararg: bool,
-        return_ty: Type
+        return_ty: Type,
     },
-    Property{
+    Property {
         readonly: bool,
-        ty: Type
-    }
+        ty: Type,
+    },
 }
 
-pub struct StructType{
+pub struct StructType {
     pub properties: HashMap<PropName, StructProperty>,
+}
+
+#[derive(Debug, Clone, PartialOrd)]
+pub enum LiteralType {
+    String(Box<str>),
+    Number(f64),
+    Symbol(Symbol),
+    Bool(bool),
+    Bigint(i128),
+}
+
+impl PartialEq for LiteralType {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Self::Number(n) => match other {
+                Self::Number(i) => n.total_cmp(i).is_eq(),
+                _ => false,
+            },
+            Self::String(s) => match other {
+                Self::String(n) => s == n,
+                _ => false,
+            },
+            Self::Bigint(i) => match other {
+                Self::Bigint(n) => i == n,
+                _ => false,
+            },
+            Self::Bool(b) => match other {
+                Self::Bool(p) => b == p,
+                _ => false,
+            },
+            Self::Symbol(s) => match other {
+                Self::Symbol(n) => s == n,
+                _ => false,
+            },
+        }
+    }
+}
+impl Eq for LiteralType {}
+
+impl Ord for LiteralType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self {
+            Self::Number(n) => match other {
+                Self::Number(i) => return n.total_cmp(i),
+                _ => {}
+            },
+            _ => {}
+        };
+
+        return self.partial_cmp(other).expect("partial compare");
+    }
 }

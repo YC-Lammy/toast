@@ -68,7 +68,7 @@ impl Transformer {
             swc::Expr::Fn(f) => {
                 // generate a new function id
                 let id = FunctionId::new();
-                self.translate_function(id, &f.function)?;
+                self.translate_function(id, None, &f.function)?;
 
                 let ty = self
                     .context
@@ -77,7 +77,7 @@ impl Transformer {
                     .expect("invalid function")
                     .ty();
 
-                (Expr::Function(id), Type::Function(Box::new(ty)))
+                (Expr::Closure(id), Type::Function(Box::new(ty)))
             }
             swc::Expr::Ident(id) => self.translate_var_load(id)?,
             swc::Expr::This(_) => (Expr::This, self.this_ty.clone()),
@@ -93,7 +93,18 @@ impl Transformer {
             swc::Expr::Lit(l) => self.translate_lit(l, expected_ty)?,
             swc::Expr::Tpl(_) => todo!(),
             swc::Expr::TaggedTpl(_) => todo!(),
-            swc::Expr::Yield(_y) => todo!("generator"),
+            swc::Expr::Yield(y) => {
+                let arg = if let Some(expr) = &y.arg {
+                    let r = self.return_ty.clone();
+                    let (e, _) = self.translate_expr(expr, Some(&r))?;
+                    e
+                } else {
+                    self.type_check(y.span, &Type::Undefined, &self.return_ty)?;
+                    Expr::Undefined
+                };
+                // for now use undefined
+                (Expr::Yield(Box::new(arg)), Type::Undefined)
+            }
             swc::Expr::Paren(p) => self.translate_expr(&p.expr, expected_ty)?,
 
             swc::Expr::MetaProp(m) => {
@@ -375,7 +386,7 @@ impl Transformer {
                     ty,
                 ));
             }
-            Expr::VarLoad { span:_, variable } => {
+            Expr::VarLoad { span: _, variable } => {
                 return Ok((
                     Expr::VarAssign {
                         op: a.op.into(),
@@ -616,7 +627,13 @@ impl Transformer {
                     } => {
                         // check if object matches this type
                         // todo!()
-                        (Callee::Member(*object, key), func_ty)
+                        (
+                            Callee::Member {
+                                object: *object,
+                                prop: key,
+                            },
+                            func_ty,
+                        )
                     }
                     Expr::Function(f) => {
                         // check this type matches
@@ -734,10 +751,22 @@ impl Transformer {
                     ));
                 }
 
-                return Ok((Expr::VarLoad { span: ident.span, variable: *id }, ty.clone()));
+                return Ok((
+                    Expr::VarLoad {
+                        span: ident.span,
+                        variable: *id,
+                    },
+                    ty.clone(),
+                ));
             }
             Some(Binding::Using { id, ty, .. }) => {
-                return Ok((Expr::VarLoad { span: ident.span, variable: *id }, ty.clone()))
+                return Ok((
+                    Expr::VarLoad {
+                        span: ident.span,
+                        variable: *id,
+                    },
+                    ty.clone(),
+                ))
             }
             None => {
                 return Err(Error::syntax_error(
@@ -1018,7 +1047,7 @@ impl Transformer {
                     ty,
                 ));
             }
-            Expr::VarLoad { variable, span:_ } => {
+            Expr::VarLoad { variable, span: _ } => {
                 return Ok((
                     Expr::VarUpdate {
                         op: op,
@@ -1069,7 +1098,13 @@ impl Transformer {
             if let Some(cl) = self.context.classes.get(&super_class) {
                 // find static property
                 if let Some((vid, ty)) = cl.static_properties.get(&prop) {
-                    return Ok((Expr::VarLoad { span: s.span, variable: *vid }, ty.clone()));
+                    return Ok((
+                        Expr::VarLoad {
+                            span: s.span,
+                            variable: *vid,
+                        },
+                        ty.clone(),
+                    ));
                 }
                 // find static functions
                 if let Some((fid, ty)) = cl.static_methods.get(&prop) {
@@ -1320,9 +1355,6 @@ impl Transformer {
                     };
                 }
 
-                // member call
-                if let Some(member) = c.callee.as_member() {}
-
                 // expression
                 if callee.is_none() {
                     let (expr, ty) = self.translate_expr(&c.callee, None)?;
@@ -1374,7 +1406,20 @@ impl Transformer {
                     // check this type matches
                     self.type_check(c.span, &self.this_ty, &func.this_ty)?;
 
-                    callee = Some(Callee::Expr(expr));
+                    // member call
+                    if let Expr::Member {
+                        object,
+                        key,
+                        optional,
+                    } = expr
+                    {
+                        callee = Some(Callee::Member {
+                            object: *object,
+                            prop: key,
+                        });
+                    } else {
+                        callee = Some(Callee::Expr(expr));
+                    }
                     func_ty = Some(func);
                 };
 

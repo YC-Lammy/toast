@@ -20,6 +20,7 @@ use swc_ecmascript::ast as swc;
 use crate::{
     ast::{self, Expr, Function, FunctionParam, ModuleExport, Stmt, Type},
     common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, VariableId},
+    symbol_table::SymbolTable,
     PropName,
 };
 
@@ -119,7 +120,15 @@ impl Transformer {
                                 .as_ref()
                                 .map(|id| self.context.get_class_id(&id.sym))
                                 .unwrap_or(ClassId::new());
-                            self.translate_class(id, &c.class)?;
+                            self.translate_class(
+                                id,
+                                c.ident
+                                    .as_ref()
+                                    .map(|i| i.sym.as_ref())
+                                    .unwrap_or("default")
+                                    .to_string(),
+                                &c.class,
+                            )?;
                             self.context.func().stmts.push(Stmt::DeclareClass(id));
 
                             export_default = ModuleExport::Class(id);
@@ -130,7 +139,7 @@ impl Transformer {
                                 .as_ref()
                                 .map(|id| self.context.get_func_id(&id.sym))
                                 .unwrap_or(FunctionId::new());
-                            self.translate_function(id, &f.function)?;
+                            self.translate_function(id, None, &f.function)?;
                             self.context.func().stmts.push(Stmt::DeclareFunction(id));
 
                             export_default = ModuleExport::Function(id);
@@ -284,10 +293,13 @@ impl Transformer {
         let main = self.context.end_function();
 
         return Ok(ast::Module {
-            functions: core::mem::replace(&mut self.context.functions, Default::default()),
-            classes: core::mem::replace(&mut self.context.classes, Default::default()),
-            interfaces: core::mem::replace(&mut self.context.interfaces, Default::default()),
-            enums: core::mem::replace(&mut self.context.enums, Default::default()),
+            table: SymbolTable {
+                external_functions: Default::default(),
+                functions: core::mem::replace(&mut self.context.functions, Default::default()),
+                classes: core::mem::replace(&mut self.context.classes, Default::default()),
+                interfaces: core::mem::replace(&mut self.context.interfaces, Default::default()),
+                enums: core::mem::replace(&mut self.context.enums, Default::default()),
+            },
             main_function: main,
             default_export: export_default,
             exports: module_exports,
@@ -384,7 +396,7 @@ impl Transformer {
                 match self.context.find(&class.ident.sym) {
                     Some(Binding::Class(id)) => {
                         let id = *id;
-                        let c = self.translate_class_ty(&class.class)?;
+                        let c = self.translate_class_ty(id, &class.class)?;
                         self.context.classes.insert(id, c);
                     }
                     Some(Binding::GenericClass(_id)) => {
@@ -411,7 +423,7 @@ impl Transformer {
                 match self.context.find(&func.ident.sym) {
                     Some(Binding::Function(id)) => {
                         let id = *id;
-                        self.translate_function(id, &func.function)?;
+                        self.translate_function(id, None, &func.function)?;
                     }
                     Some(Binding::GenericFunction(_id)) => {
                         todo!("generic function")

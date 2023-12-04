@@ -68,6 +68,7 @@ pub struct Context {
     pub generic_alias: HashMap<AliasId, ()>,
     pub alias: HashMap<AliasId, Type>,
 
+    global_func: FunctionId,
     scopes: Vec<Scope>,
 }
 
@@ -84,6 +85,7 @@ impl Context {
             enums: Default::default(),
             generic_alias: Default::default(),
             alias: Default::default(),
+            global_func: function_id,
             scopes: vec![Scope {
                 function_id,
                 bindings: Default::default(),
@@ -188,12 +190,19 @@ impl Context {
         }
     }
 
-    pub fn declare_global(&mut self, name: String, binding: Binding) {
-        self.scopes
-            .first_mut()
-            .unwrap()
-            .bindings
-            .insert(name, binding);
+    pub fn declare_global(&mut self, id: VariableId, ty: Type) {
+        self.functions
+            .get_mut(&self.global_func)
+            .expect("invalid function")
+            .variables
+            .insert(
+                id,
+                VariableDesc {
+                    ty: ty,
+                    is_heap: false,
+                    is_captured: false,
+                },
+            );
     }
 
     pub fn declare(&mut self, name: &str, binding: Binding) -> bool {

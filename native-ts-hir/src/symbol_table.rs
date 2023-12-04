@@ -1,21 +1,16 @@
 use std::collections::HashMap;
 
-use crate::ast::{FuncType, Type};
+use crate::{
+    ast::{ClassType, EnumType, FuncType, Function, InterfaceType},
+    common::{ClassId, EnumId, FunctionId, InterfaceId},
+};
 
-
-
-
-pub struct SymolTable{
+pub struct SymbolTable {
     pub external_functions: HashMap<String, FuncType>,
-
+    pub functions: HashMap<FunctionId, Function>,
+    pub classes: HashMap<ClassId, ClassType>,
+    pub interfaces: HashMap<InterfaceId, InterfaceType>,
+    pub enums: HashMap<EnumId, EnumType>,
 }
 
-impl SymolTable{
-    pub fn new() -> Self{
-        let external_functions = HashMap::new();
-
-        Self { 
-            external_functions 
-        }
-    }
-}
+impl SymbolTable {}

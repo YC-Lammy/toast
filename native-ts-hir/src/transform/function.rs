@@ -3,8 +3,9 @@ use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
 use crate::{
-    ast::{Expr, FuncType, Stmt, Type},
-    common::FunctionId,
+    ast::{Expr, FuncType, FunctionParam, Stmt, Type},
+    common::{FunctionId, VariableId},
+    transform::context::Binding,
 };
 
 use super::Transformer;
@@ -26,7 +27,8 @@ impl Transformer {
             return_ty: Type::Undefined,
         };
 
-        for p in &func.params {
+        // function params
+        for p in func.params.iter() {
             if let Some(ident) = p.as_ident() {
                 if ident.type_ann.is_none() {
                     return Err(Error::syntax_error(ident.span, "missing type annotation"));
@@ -93,14 +95,114 @@ impl Transformer {
             }
         }
 
-        self.context.end_function();
-
         func_ty.return_ty = return_ty.unwrap();
+
+        let func_id = self.context.end_function();
+        debug_assert!(func_id == id);
 
         return Ok((Expr::Closure(id), Type::Function(Box::new(func_ty))));
     }
 
-    pub fn translate_function(&mut self, id: FunctionId, func: &swc::Function) -> Result<()> {
-        todo!()
+    pub fn translate_function(
+        &mut self,
+        id: FunctionId,
+        class_this_ty: Option<Type>,
+        func: &swc::Function,
+    ) -> Result<()> {
+        self.context.new_function(id);
+
+        let mut this_ty = Type::Any;
+
+        if let Some(_type_params) = &func.type_params {
+            todo!("generic function")
+        }
+
+        for (i, p) in func.params.iter().enumerate() {
+            if let Some(ident) = p.pat.as_ident() {
+                if let Some(ann) = &ident.type_ann {
+                    let ty = self.translate_type(&ann.type_ann)?;
+                    let id = VariableId::new();
+
+                    if i == 0 && ident.sym.as_ref() == "this" {
+                        if class_this_ty.is_some() {
+                            return Err(Error::syntax_error(
+                                ident.span,
+                                "'this' param is not allowed",
+                            ));
+                        }
+                        this_ty = ty;
+                        continue;
+                    }
+                    // declare binding
+                    self.context.declare(
+                        &ident.sym,
+                        Binding::Var {
+                            writable: true,
+                            redeclarable: true,
+                            id: id,
+                            ty: ty.clone(),
+                        },
+                    );
+                    // add param
+                    self.context
+                        .func()
+                        .params
+                        .push(FunctionParam { id: id, ty: ty });
+                } else {
+                    return Err(Error::syntax_error(ident.span, "missing type annotation"));
+                }
+            }
+
+            if let Some(r) = p.pat.as_rest() {
+                return Err(Error::syntax_error(
+                    r.dot3_token,
+                    "variable arguments not supported",
+                ));
+            } else {
+                return Err(Error::syntax_error(
+                    p.span,
+                    "destructive param not supported",
+                ));
+            }
+        }
+
+        if let Some(ty) = class_this_ty {
+            this_ty = ty;
+        }
+
+        let mut return_ty = if let Some(ann) = &func.return_type {
+            self.translate_type(&ann.type_ann)?
+        } else {
+            Type::Undefined
+        };
+
+        if func.is_async {
+            return_ty = Type::Promise(Box::new(return_ty));
+        }
+        if func.is_generator {
+            return_ty = Type::Iterator(Box::new(return_ty));
+        }
+
+        let old_this_ty = core::mem::replace(&mut self.this_ty, this_ty);
+        let old_return_ty = core::mem::replace(&mut self.return_ty, return_ty);
+
+        // translate body
+        if let Some(block) = &func.body {
+            self.translate_block_stmt(block, None)?
+        } else {
+            return Err(Error::syntax_error(func.span, "missing function body"));
+        }
+
+        let this_ty = core::mem::replace(&mut self.this_ty, old_this_ty);
+        let return_ty = core::mem::replace(&mut self.return_ty, old_return_ty);
+
+        let f = self.context.func();
+        f.this_ty = this_ty;
+        f.return_ty = return_ty;
+
+        let func_id = self.context.end_function();
+        debug_assert!(func_id == id);
+
+        return Ok(());
     }
 }

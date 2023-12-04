@@ -1,18 +1,23 @@
-use crate::{common::VariableId, PropName};
+use crate::{
+    common::{FunctionId, VariableId},
+    PropName,
+};
 
 use super::{Callee, Expr, Module, PropNameOrExpr, Stmt, Type, UnaryOp, UpdateOp};
+use crate::symbol_table::SymbolTable;
 
-#[derive(Debug, Default)]
-pub struct Formatter {
+pub struct Formatter<'a> {
     spaces: usize,
     buf: String,
+    table: &'a SymbolTable,
 }
 
-impl Formatter {
-    pub const fn new() -> Self {
+impl<'a> Formatter<'a> {
+    pub const fn new(table: &'a SymbolTable) -> Self {
         Self {
             spaces: 0,
             buf: String::new(),
+            table,
         }
     }
     pub fn emit_string(&mut self) -> String {
@@ -37,7 +42,11 @@ impl Formatter {
         self.write_str(buf.format(i))
     }
     pub fn format_module(&mut self, m: &Module) {
-        let func = m.functions.get(&m.main_function).expect("invalid function");
+        let func = self
+            .table
+            .functions
+            .get(&m.main_function)
+            .expect("invalid function");
         for stmt in &func.stmts {
             self.format_stmt(stmt);
         }
@@ -56,12 +65,93 @@ impl Formatter {
                 self.emit_spaces();
                 self.write_str("}\n");
             }
-            Stmt::DeclareClass(id) => {}
-            Stmt::DeclareFunction(id) => {}
-            Stmt::DeclareGenericClass(id) => {}
-            Stmt::DeclareGenericFunction(id) => {}
-            Stmt::DeclareGenericInterface(id) => {}
-            Stmt::DeclareInterface(id) => {}
+            Stmt::DeclareClass(id) => {
+                let class = self.table.classes.get(id).expect("invalid class");
+
+                self.write_str("class class");
+                self.write_int(id.0);
+
+                if let Some(sup) = class.extends {
+                    self.write_str(" extends class");
+                    self.write_int(sup.0);
+                };
+
+                if !class.implements.is_empty() {
+                    self.write_str(" implements ");
+                    for (i, iface) in class.implements.iter().enumerate() {
+                        self.write_str("iface");
+                        self.write_int(iface.0);
+
+                        if i + 1 != class.implements.len() {
+                            self.write_str(", ")
+                        }
+                    }
+                }
+
+                self.write_str("{\n");
+                self.new_scope();
+
+                if let Some((id, _)) = &class.constructor {
+                    self.emit_spaces();
+                    self.write_str("constructor");
+                    self.format_function_body(*id);
+                }
+
+                for (name, (_, ty)) in &class.static_properties {
+                    self.emit_spaces();
+                    self.write_str("static ");
+                    self.format_propname(name);
+                    self.write_str(":");
+                    self.format_ty(ty);
+                    self.write_str(";\n")
+                }
+
+                for (name, prop) in &class.properties {
+                    self.emit_spaces();
+                    if prop.readonly {
+                        self.write_str("readonly ");
+                    }
+                    self.format_propname(name);
+                    self.write_str(":");
+                    self.format_ty(&prop.ty);
+
+                    if let Some(init) = &prop.initialiser {
+                        self.write_str("=");
+                        self.format_expr(init);
+                        self.write_str(";\n");
+                    }
+                }
+
+                for (name, (id, _)) in &class.static_methods {
+                    self.emit_spaces();
+                    self.write_str("static function ");
+                    self.format_propname(name);
+                    self.format_function_body(*id);
+                }
+
+                for (name, (id, _)) in &class.methods {
+                    self.emit_spaces();
+                    self.write_str("function ");
+                    self.format_propname(name);
+                    self.format_function_body(*id);
+                }
+
+                self.close_scope();
+                self.emit_spaces();
+                self.write_str("}\n");
+            }
+            Stmt::DeclareFunction(id) => {
+                self.emit_spaces();
+                self.write_str("function fun");
+                self.write_int(id.0);
+                self.format_function_body(*id);
+            }
+            Stmt::DeclareGenericClass(_id) => {}
+            Stmt::DeclareGenericFunction(_id) => {}
+            Stmt::DeclareGenericInterface(_id) => {}
+            Stmt::DeclareInterface(id) => {
+                let iface = self.table.interfaces.get(id).expect("invalid interface");
+            }
             Stmt::DeclareVar(id, ty) => {
                 self.emit_spaces();
                 self.write_str("var var");
@@ -364,8 +454,8 @@ impl Formatter {
                         self.write_str("fun");
                         self.write_int(id.0)
                     }
-                    Callee::Member(obj, prop) => {
-                        self.format_expr(obj);
+                    Callee::Member { object, prop } => {
+                        self.format_expr(object);
                         self.format_propname_or_expr(prop);
                     }
                     Callee::Super(_) => self.write_str("super"),
@@ -392,7 +482,11 @@ impl Formatter {
                 self.write_str(" as ");
                 self.format_ty(ty);
             }
-            Expr::Closure(id) => {}
+            Expr::Closure(id) => {
+                self.write_str("function fun");
+                self.write_int(id.0);
+                self.format_function_body(*id);
+            }
             Expr::Function(id) => {
                 self.write_str("fun");
                 self.write_int(id.0);
@@ -522,7 +616,7 @@ impl Formatter {
 
                 self.format_expr(&value);
             }
-            Expr::VarLoad { span:_, variable } => {
+            Expr::VarLoad { span: _, variable } => {
                 self.write_str("var");
                 self.write_int(variable.0);
             }
@@ -546,6 +640,31 @@ impl Formatter {
                 self.format_expr(y);
             }
         }
+    }
+
+    fn format_function_body(&mut self, id: FunctionId) {
+        let func = self.table.functions.get(&id).expect("invalid function");
+        self.write_str("(this:");
+        self.format_ty(&func.this_ty);
+
+        for p in func.params.iter() {
+            self.write_str(", var");
+            self.write_int(p.id.0);
+            self.write_str(":");
+            self.format_ty(&p.ty);
+        }
+        self.write_str("):");
+        self.format_ty(&func.return_ty);
+        self.write_str("{\n");
+        self.new_scope();
+
+        for s in &func.stmts {
+            self.format_stmt(s);
+        }
+
+        self.close_scope();
+        self.emit_spaces();
+        self.write_str("}\n");
     }
 
     fn format_propname_or_expr(&mut self, prop: &PropNameOrExpr) {

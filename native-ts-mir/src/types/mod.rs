@@ -2,7 +2,7 @@ pub mod aggregate;
 
 use std::marker::PhantomData;
 
-use crate::util::{AggregateID, FunctionID, InterfaceID};
+use crate::util::{AggregateID, InterfaceID};
 use crate::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,8 +84,10 @@ pub enum Type<'ctx> {
     Aggregate(AggregateID<'ctx>),
     /// an interface type
     Interface(InterfaceID<'ctx>),
-    /// a pointer
+    /// a raw pointer
     Pointer(Box<Type<'ctx>>),
+    /// a smart pointer
+    SmartPointer(Box<Type<'ctx>>),
     /// a function, a safe wrapper around pointer
     Function(Box<FunctionType<'ctx>>),
     /// a fixed size array
@@ -133,7 +135,7 @@ impl<'ctx> Type<'ctx> {
             Self::F32 => 4,
             Self::F64 => 8,
 
-            Self::Usize | Self::Isize | Self::Pointer(_) | Self::Function(_) => todo!(),
+            Self::Usize | Self::Isize | Self::Pointer(_) | Self::SmartPointer(_) | Self::Function(_) => todo!(),
             Self::Aggregate(_) => todo!(),
             Self::Interface(_) => todo!(),
             Self::Future(_) => todo!(),
@@ -351,21 +353,35 @@ impl<'ctx, Arg: FunctionArgs<'ctx>, R: MarkerType<'ctx>> MarkerType<'ctx>
 }
 
 pub trait FunctionArgs<'ctx>: Clone {
-    type ArgValues<'func>:?Sized;
+    type ArgValues<'func>:ValueIndex<'ctx, 'func> + ?Sized;
     fn len(&self) -> usize;
     fn get(&self, index: usize) -> Type<'ctx>;
+}
+
+pub trait ValueIndex<'ctx, 'func>{
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> Value<'ctx, 'func, Auto<'ctx>>;
 }
 
 #[derive(Clone)]
 pub struct AutoArgs<'ctx>(Box<[Type<'ctx>]>);
 
 impl<'ctx> FunctionArgs<'ctx> for AutoArgs<'ctx>{
-    type ArgValues<'func> = [Type<'ctx>];
+    type ArgValues<'func> = [Value<'ctx, 'func, Auto<'ctx>>];
     fn len(&self) -> usize {
         self.0.len()
     }
     fn get(&self, index: usize) -> Type<'ctx> {
         self.0[index].clone()
+    }
+}
+
+impl<'ctx, 'func> ValueIndex<'ctx, 'func> for [Value<'ctx, 'func, Auto<'ctx>>]{
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn get(&self, index: usize) -> Value<'ctx, 'func, Auto<'ctx>> {
+        self[index].into_auto()
     }
 }
 
@@ -379,15 +395,37 @@ impl<'ctx> FunctionArgs<'ctx> for () {
     }
 }
 
+impl<'ctx, 'func> ValueIndex<'ctx, 'func> for (){
+    fn len(&self) -> usize {
+        0
+    }
+    fn get(&self, _index: usize) -> Value<'ctx, 'func, Auto<'ctx>> {
+        unreachable!()
+    }
+}
+
 impl<'ctx, T: MarkerType<'ctx>> FunctionArgs<'ctx> for T {
-    type ArgValues<'func> = T;
+    type ArgValues<'func> = Value<'ctx, 'func, T>;
     fn len(&self) -> usize {
         1
     }
     fn get(&self, index: usize) -> Type<'ctx> {
         match index {
-            1 => self.to_type(),
+            0 => self.to_type(),
             _ => unreachable!(),
+        }
+    }
+}
+
+impl<'ctx, 'func, T:MarkerType<'ctx>> ValueIndex<'ctx, 'func> for Value<'ctx, 'func, T>{
+    fn len(&self) -> usize {
+        1
+    }
+    fn get(&self, index: usize) -> Value<'ctx, 'func, Auto<'ctx>> {
+        if index == 0{
+            self.into_auto()
+        } else{
+            unreachable!()
         }
     }
 }
@@ -404,6 +442,20 @@ macro_rules! impl_function_arg {
                 $(
                     if $idx == index{
                         return self.$idx.to_type()
+                    }
+                )*
+                unreachable!()
+            }
+        }
+        #[allow(unused)]
+        impl<'ctx, 'func, $($ty:MarkerType<'ctx>),*> ValueIndex<'ctx, 'func> for ($(Value<'ctx, 'func, $ty>),*){
+            fn len(&self) -> usize{
+                $($idx + 1);*
+            }
+            fn get(&self, index:usize) -> Value<'ctx, 'func, Auto<'ctx>>{
+                $(
+                    if $idx == index{
+                        return self.$idx.into_auto()
                     }
                 )*
                 unreachable!()
@@ -487,6 +539,7 @@ impl<'ctx> MarkerType<'ctx> for Aggregate<'ctx> {
 }
 impl<'ctx> FieldedMarkerType<'ctx> for Aggregate<'ctx> {}
 impl<'ctx> FieldedMarkerType<'ctx> for Pointer<Aggregate<'ctx>> {}
+impl<'ctx> FieldedMarkerType<'ctx> for Smart<Aggregate<'ctx>>{}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Interface<'ctx>(pub InterfaceID<'ctx>);
@@ -499,6 +552,8 @@ impl<'ctx> MarkerType<'ctx> for Interface<'ctx> {
     }
 }
 impl<'ctx> FieldedMarkerType<'ctx> for Interface<'ctx> {}
+impl<'ctx> FieldedMarkerType<'ctx> for Pointer<Interface<'ctx>>{}
+impl<'ctx> FieldedMarkerType<'ctx> for Smart<Interface<'ctx>>{}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Array<T> {
@@ -542,7 +597,7 @@ where
     T: MarkerType<'ctx>,
 {
     fn to_type(&self) -> Type<'ctx> {
-        Type::Pointer(Box::new(self.pointee.to_type()))
+        Type::SmartPointer(Box::new(self.pointee.to_type()))
     }
 }
 

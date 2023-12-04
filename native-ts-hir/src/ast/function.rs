@@ -5,23 +5,23 @@ use crate::common::VariableId;
 use super::{FuncType, GenericParam};
 use super::{Stmt, Type};
 
-pub struct VariableDesc<T> {
-    pub ty: T,
+pub struct VariableDesc {
+    pub ty: Type,
     pub is_heap: bool,
     pub is_captured: bool,
 }
 
-pub struct FunctionParam<T> {
+pub struct FunctionParam {
     pub id: VariableId,
-    pub ty: T,
+    pub ty: Type,
 }
 
-pub struct Function<T = Type> {
-    pub this_ty: T,
-    pub params: Vec<FunctionParam<T>>,
-    pub return_ty: T,
+pub struct Function {
+    pub this_ty: Type,
+    pub params: Vec<FunctionParam>,
+    pub return_ty: Type,
 
-    pub variables: HashMap<VariableId, VariableDesc<T>>,
+    pub variables: HashMap<VariableId, VariableDesc>,
     pub captures: Vec<(VariableId, Type)>,
     pub stmts: Vec<Stmt>,
 }
@@ -41,9 +41,9 @@ pub struct GenericFunction {
     pub type_params: Vec<GenericParam>,
 
     pub this_ty: Type,
-    pub params: Vec<FunctionParam<Type>>,
+    pub params: Vec<FunctionParam>,
     pub return_ty: Type,
 
-    pub variables: HashMap<VariableId, VariableDesc<Type>>,
+    pub variables: HashMap<VariableId, VariableDesc>,
     pub stmts: Vec<Stmt>,
 }

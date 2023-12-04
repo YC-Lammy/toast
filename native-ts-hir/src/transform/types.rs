@@ -5,8 +5,8 @@ use swc_common::{Span, Spanned};
 use swc_ecmascript::ast as swc;
 
 use crate::ast::{
-    ClassType, EnumType, EnumVariantDesc, FuncType, InterfaceMethod, InterfacePropertyDesc,
-    InterfaceType, PropNameOrExpr, Type,
+    EnumType, EnumVariantDesc, FuncType, InterfaceMethod, InterfacePropertyDesc, InterfaceType,
+    PropNameOrExpr, Type,
 };
 use crate::common::{AliasId, ClassId, FunctionId, InterfaceId};
 use crate::{PropName, Symbol};
@@ -16,63 +16,68 @@ type Result<T> = std::result::Result<T, Error<Span>>;
 use super::{context::Binding, Transformer};
 
 impl Transformer {
-    /// this function only translates type definitions and does not translate any initialiser or methods
-    pub fn translate_class_ty(&mut self, class: &swc::Class) -> Result<ClassType> {
-        todo!()
-    }
-
-    pub fn translate_class(&mut self, id: ClassId, class: &swc::Class) -> Result<()> {
-        return Ok(());
-    }
-
     pub fn translate_function_ty(&mut self, func: &swc::Function) -> Result<FuncType> {
-        if func.type_params.is_some(){
-            unimplemented!("generic function")
+        if func.type_params.is_some() {
+            todo!("generic function")
         }
         let mut this_ty = Type::Any;
         let mut return_ty = Type::Undefined;
         let mut params = Vec::new();
         let is_var_arg = false;
 
-        for (i, p) in func.params.iter().enumerate(){
-            if let Some(ident) = p.pat.as_ident(){
-                if let Some(ann) = &ident.type_ann{
+        for (i, p) in func.params.iter().enumerate() {
+            if let Some(ident) = p.pat.as_ident() {
+                if let Some(ann) = &ident.type_ann {
                     let ty = self.translate_type(&ann.type_ann)?;
 
-                    if i == 0 && ident.sym.as_ref() == "this"{
+                    if i == 0 && ident.sym.as_ref() == "this" {
                         this_ty = ty;
-                    } else{
+                    } else {
                         params.push(ty);
                     };
-                } else{
-                    return Err(Error::syntax_error(ident.span, "missing type annotation"))
+                } else {
+                    return Err(Error::syntax_error(ident.span, "missing type annotation"));
                 }
-            } else if let Some(rest) = p.pat.as_rest(){
+            } else if let Some(rest) = p.pat.as_rest() {
                 //is_var_arg = true;
 
-                if i != func.params.len() - 1{
-                    return Err(Error::syntax_error(rest.dot3_token, "variable arguments is only allowed at the last param"))
+                if i != func.params.len() - 1 {
+                    return Err(Error::syntax_error(
+                        rest.dot3_token,
+                        "variable arguments is only allowed at the last param",
+                    ));
                 }
 
-                return Err(Error::syntax_error(rest.dot3_token, "variable arguments not supported"))
-            } else{
-                return Err(Error::syntax_error(p.span, "destructive params not allowed"))
+                return Err(Error::syntax_error(
+                    rest.dot3_token,
+                    "variable arguments not supported",
+                ));
+            } else {
+                return Err(Error::syntax_error(
+                    p.span,
+                    "destructive params not allowed",
+                ));
             }
         }
 
-        if let Some(ann) = &func.return_type{
+        if let Some(ann) = &func.return_type {
             return_ty = self.translate_type(&ann.type_ann)?;
         }
 
-        if func.is_async{
+        if func.is_async {
             return_ty = Type::Promise(Box::new(return_ty));
         }
 
-        if func.is_generator{
+        if func.is_generator {
             return_ty = Type::Iterator(Box::new(return_ty));
         }
 
-        return Ok(FuncType { this_ty, params, var_arg: is_var_arg, return_ty })
+        return Ok(FuncType {
+            this_ty,
+            params,
+            var_arg: is_var_arg,
+            return_ty,
+        });
     }
 
     pub fn translate_interface(&mut self, iface: &swc::TsInterfaceDecl) -> Result<InterfaceType> {
@@ -84,17 +89,22 @@ impl Transformer {
             methods: HashMap::new(),
         };
 
+        // translate constrains
         for ty in &iface.extends {
+            // translate type arguments
             let type_args = if let Some(type_args) = &ty.type_args {
                 self.translate_type_args(&type_args)?
             } else {
                 Vec::new()
             };
 
+            // translate type
             let t = self.translate_expr_type(&ty.expr, &type_args)?;
 
             match t {
+                // a class
                 Type::Object(class_id) => iface_ty.extends.push(class_id),
+                // an interface
                 Type::Interface(iface_id) => iface_ty.implements.push(iface_id),
                 _ => {
                     return Err(Error::syntax_error(
@@ -400,15 +410,18 @@ impl Transformer {
                 return Ok(Type::Array(Box::new(member)));
             }
             swc::TsType::TsConditionalType(c) => {
-                let _check_ty = self.translate_type(&c.check_type)?;
-                let _extends_ty = self.translate_type(&c.extends_type)?;
-                let _false_ty = self.translate_type(&c.false_type)?;
-                let _true_ty = self.translate_type(&c.true_type)?;
+                let check_ty = self.translate_type(&c.check_type)?;
+                let extends_ty = self.translate_type(&c.extends_type)?;
+                let false_ty = self.translate_type(&c.false_type)?;
+                let true_ty = self.translate_type(&c.true_type)?;
 
-                return Err(Error::syntax_error(
-                    c.span,
-                    "conditional type not allowed. All types should be known at compile time",
-                ));
+                let t = self.type_check(c.span, &check_ty, &extends_ty).is_ok();
+
+                if t {
+                    return Ok(true_ty);
+                } else {
+                    return Ok(false_ty);
+                }
             }
             swc::TsType::TsFnOrConstructorType(func) => {
                 let func = self.translate_func_type(func)?;
@@ -748,48 +761,47 @@ impl Transformer {
             }
             swc::TsFnOrConstructorType::TsFnType(func) => {
                 if func.type_params.is_some() {
-                    return Err(Error::syntax_error(func.span, ""));
+                    return Err(Error::syntax_error(
+                        func.span,
+                        "fucntion type cannot be generic",
+                    ));
                 }
 
+                // this type default to any
                 let mut this_ty = Type::Any;
                 let mut params = Vec::new();
 
+                // translate params
                 for (i, p) in func.params.iter().enumerate() {
-                    match p {
-                        swc::TsFnParam::Ident(id) => {
-                            if id.type_ann.is_none() {
-                                return Err(Error::syntax_error(id.span, ""));
-                            }
-                            let mut ty =
-                                self.translate_type(&id.type_ann.as_ref().unwrap().type_ann)?;
-
-                            if id.optional {
-                                ty = ty.union(Type::Undefined);
-                            }
-
-                            if id.sym.as_ref() == "this" {
-                                if i == 0 {
-                                    this_ty = ty;
-                                    continue;
-                                } else {
-                                    return Err(Error::syntax_error(
-                                        id.span,
-                                        "'this' keyword is only allowed at the first param",
-                                    ));
-                                }
-                            }
-
-                            params.push(ty);
+                    if let swc::TsFnParam::Ident(id) = p {
+                        if id.type_ann.is_none() {
+                            return Err(Error::syntax_error(id.span, "missing type annotation"));
                         }
-                        _ => {
-                            return Err(Error::syntax_error(
-                                p.span(),
-                                "destructive params not allowed",
-                            ))
+                        let mut ty =
+                            self.translate_type(&id.type_ann.as_ref().unwrap().type_ann)?;
+
+                        // optional type
+                        if id.optional {
+                            ty = ty.union(Type::Undefined);
                         }
+
+                        // explicit this type
+                        if id.sym.as_ref() == "this" && i == 0 {
+                            this_ty = ty;
+                            continue;
+                        }
+
+                        params.push(ty);
+                    } else {
+                        // function type should not be destructive
+                        return Err(Error::syntax_error(
+                            p.span(),
+                            "destructive params not allowed",
+                        ));
                     }
                 }
 
+                // return type
                 let return_ty = self.translate_type(&func.type_ann.type_ann)?;
 
                 return Ok(FuncType {

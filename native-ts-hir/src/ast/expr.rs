@@ -194,9 +194,10 @@ pub enum UpdateOp {
     SuffixSub,
 }
 
+#[derive(Clone)]
 pub enum Callee {
     Function(FunctionId),
-    Member(Expr, PropNameOrExpr),
+    Member { object: Expr, prop: PropNameOrExpr },
     Expr(Expr),
     Super(ClassId),
 }
@@ -204,7 +205,7 @@ pub enum Callee {
 impl Callee {
     pub fn is_member(&self) -> bool {
         match self {
-            Self::Member(_, _) => true,
+            Self::Member { .. } => true,
             _ => false,
         }
     }
@@ -233,11 +234,13 @@ impl UnaryOp {
     }
 }
 
+#[derive(Clone)]
 pub enum PropNameOrExpr {
     PropName(PropName),
     Expr(Box<Expr>, Type),
 }
 
+#[derive(Clone)]
 pub enum Expr {
     Undefined,
     Null,
@@ -251,7 +254,7 @@ pub enum Expr {
     /// loads a symbol
     Symbol(Symbol),
     Regex(),
-    /// function is a static and is initialised
+    /// function is static and is initialised
     Function(FunctionId),
     /// a closure captures variables
     Closure(FunctionId),

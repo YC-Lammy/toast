@@ -138,12 +138,12 @@ impl Transformer {
         match decl {
             swc::Decl::Class(c) => {
                 let id = self.context.get_class_id(&c.ident.sym);
-                self.translate_class(id, &c.class)?;
+                self.translate_class(id, c.ident.sym.to_string(), &c.class)?;
                 self.context.func().stmts.push(Stmt::DeclareClass(id));
             }
             swc::Decl::Fn(f) => {
                 let id = self.context.get_func_id(&f.ident.sym);
-                self.translate_function(id, &f.function)?;
+                self.translate_function(id, None, &f.function)?;
                 self.context.func().stmts.push(Stmt::DeclareFunction(id));
             }
             swc::Decl::TsEnum(_) => {
@@ -553,10 +553,12 @@ impl Transformer {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member(
-                            iterable_expr,
-                            PropNameOrExpr::PropName(PropName::Symbol(crate::Symbol::Iterator)),
-                        )),
+                        callee: Box::new(Callee::Member {
+                            object: iterable_expr,
+                            prop: PropNameOrExpr::PropName(PropName::Symbol(
+                                crate::Symbol::Iterator,
+                            )),
+                        }),
                         args: Vec::new(),
                         optional: false,
                     }),
@@ -579,7 +581,10 @@ impl Transformer {
                             span: Span::default(),
                             variable: iterator_var,
                         }),
-                        right: Box::new(Expr::VarLoad { span: Span::default(), variable: counter }),
+                        right: Box::new(Expr::VarLoad {
+                            span: Span::default(),
+                            variable: counter,
+                        }),
                     },
                 });
                 self.context.func().stmts.push(Stmt::Break(None));
@@ -591,13 +596,13 @@ impl Transformer {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_result_var,
                     value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member(
-                            Expr::VarLoad {
+                        callee: Box::new(Callee::Member {
+                            object: Expr::VarLoad {
                                 span: Span::default(),
                                 variable: iterator_var,
                             },
-                            PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
-                        )),
+                            prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                        }),
                         args: Vec::new(),
                         optional: false,
                     }),
@@ -779,10 +784,12 @@ impl Transformer {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member(
-                            iterable_expr,
-                            PropNameOrExpr::PropName(PropName::Symbol(crate::Symbol::Iterator)),
-                        )),
+                        callee: Box::new(Callee::Member {
+                            object: iterable_expr,
+                            prop: PropNameOrExpr::PropName(PropName::Symbol(
+                                crate::Symbol::Iterator,
+                            )),
+                        }),
                         args: Vec::new(),
                         optional: false,
                     }),
@@ -805,7 +812,10 @@ impl Transformer {
                             span: Span::default(),
                             variable: iterator_result_var,
                         }),
-                        right: Box::new(Expr::VarLoad { span: Span::default(), variable: counter }),
+                        right: Box::new(Expr::VarLoad {
+                            span: Span::default(),
+                            variable: counter,
+                        }),
                     },
                 });
                 self.context.func().stmts.push(Stmt::Break(None));
@@ -817,13 +827,13 @@ impl Transformer {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_result_var,
                     value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member(
-                            Expr::VarLoad {
+                        callee: Box::new(Callee::Member {
+                            object: Expr::VarLoad {
                                 span: Span::default(),
                                 variable: iterator_var,
                             },
-                            PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
-                        )),
+                            prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                        }),
                         args: Vec::new(),
                         optional: false,
                     }),

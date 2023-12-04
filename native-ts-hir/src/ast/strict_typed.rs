@@ -1,7 +1,6 @@
-use crate::common::{ClassId, InterfaceId, EnumId};
+use crate::common::{ClassId, EnumId, InterfaceId};
 
 use super::FuncType;
-
 
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -31,12 +30,11 @@ pub enum Type {
     Iterator(Box<Type>),
 }
 
-impl From<super::Type> for Type{
+impl From<super::Type> for Type {
     fn from(value: super::Type) -> Self {
-        match value{
-            super::Type::Alias(_)
-            | super::Type::Generic(_) => panic!(),
-            _ => unsafe{core::mem::transmute(value)}
+        match value {
+            super::Type::Alias(_) | super::Type::Generic(_) => panic!(),
+            _ => unsafe { core::mem::transmute(value) },
         }
     }
 }

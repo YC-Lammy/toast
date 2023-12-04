@@ -195,6 +195,19 @@ impl<'ctx, 'func> Value<'ctx, 'func, Auto<'ctx>> {
         panic!("value is not pointer")
     }
 
+    pub fn into_smart_pointer<T: MarkerType<'ctx>>(&self, ty: T) -> Value<'ctx, 'func, Smart<T>> {
+        if let Type::Pointer(t) = &self.ty.inner {
+            if t.as_ref() == &ty.to_type() {
+                return Value {
+                    id: self.id,
+                    ty: Smart { pointee: ty },
+                    _mark: PhantomData,
+                };
+            }
+        }
+        panic!("value is not pointer")
+    }
+
     pub fn into_function<Arg: FunctionArgs<'ctx>, R: MarkerType<'ctx>>(
         &self,
         args: Arg,

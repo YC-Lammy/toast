@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use types::{Auto, FunctionType, IntoMarkerType};
+use types::{Auto, FunctionType, IntoMarkerType, Smart, ValueIndex};
 
 use crate::function::{BlockDesc, Function};
 use crate::mir::{FCond, ICond, Ordering, MIR};
@@ -61,20 +61,10 @@ where
         self.current_block = unsafe{core::mem::transmute(block)};
     }
 
-    pub fn create_stack_slot<T: IntoMarkerType<'ctx>>(&mut self, ty: T) -> StackSlot<'ctx, 'func, T::Marker> {
-        let id = self.func.stackslots.len();
-        let ty = ty.into();
-        self.func.stackslots.push(ty.to_type());
-        StackSlot {
-            id: StackSlotID(id),
-            ty: ty,
-            _mark: PhantomData,
-        }
-    }
-
     pub fn inst<'builder>(&'builder mut self) -> InstBuilder<'ctx, 'func, 'builder>{
         InstBuilder {
             ctx: self.ctx,
+            func: self.func,
             block: self.current_block,
             _mark: PhantomData
         }
@@ -85,6 +75,7 @@ where
     'ctx: 'func, 'func: 'builder
 {
     ctx: &'builder mut Context,
+    func: &'builder mut Function<'ctx>,
     block: &'builder mut crate::function::BlockDesc<'ctx>,
     _mark: PhantomData<&'func ()>
 }
@@ -756,10 +747,30 @@ where
     }
     pub fn aggregate_to_interface(
         &mut self,
-        target: Value<'ctx, 'func, Pointer<Aggregate<'ctx>>>,
+        value: Value<'ctx, 'func, Smart<Aggregate<'ctx>>>,
         iface: InterfaceID<'ctx>,
     ) -> Value<'ctx, 'func, Interface<'ctx>> {
-        todo!()
+        
+        let agg = self.ctx.get_aggregate(value.ty.pointee.0);
+        let interface = self.ctx.get_interface(iface);
+
+        if agg.fields.len() < interface.fields.len(){
+            panic!("aggregate type does not match interface")
+        }
+
+        for (ident, ty) in &interface.fields{
+            if agg.fields.iter().find(|(k, t)|k == ident && t == ty).is_none(){
+                panic!("aggregate type does not match interface")
+            }
+        }
+        let id = self.block.new_id(Type::Interface(iface));
+        self.block.inst.push(MIR::AggregateToInterface(value.id, iface, id));
+
+        return Value { 
+            id: id, 
+            ty: Interface(iface), 
+            _mark: PhantomData
+        }
     }
     pub fn interface_to_interface(
         &mut self,
@@ -803,10 +814,10 @@ where
     /// Accepts aggregate, interface, pointer to aggregate or pointer to interface.
     pub fn extract_value<T: FieldedMarkerType<'ctx>>(
         &mut self,
-        value: Value<'ctx, 'func, T>,
+        target: Value<'ctx, 'func, T>,
         field: Ident,
     ) -> Value<'ctx, 'func, Auto<'ctx>> {
-        let ty = match value.ty.to_type() {
+        let ty = match target.ty.to_type() {
             Type::Aggregate(id) => {
                 if let Some((_, ty)) = self
                     .ctx
@@ -833,7 +844,8 @@ where
                     panic!("interface has no field")
                 }
             }
-            Type::Pointer(p) => match p.as_ref() {
+            Type::SmartPointer(p)
+            | Type::Pointer(p) => match p.as_ref() {
                 Type::Aggregate(id) => {
                     if let Some((_, ty)) = self
                         .ctx
@@ -871,7 +883,7 @@ where
             .new_id(unsafe { core::mem::transmute(ty.clone()) });
 
         // insert instruction
-        self.block.inst.push(MIR::ExtractValue(value.id, field, id));
+        self.block.inst.push(MIR::ExtractValue(target.id, field, id));
 
         return Value {
             id,
@@ -882,12 +894,96 @@ where
         };
     }
 
+    /// inserts a value to a field
+    /// Accepts aggregate, interface, pointer to aggregate or pointer to interface.
+    /// 
+    /// if garbage collection is enabled, this will be lowered to a call to write barrier
     pub fn insert_value<T: FieldedMarkerType<'ctx>, V: MarkerType<'ctx>>(
         &mut self,
         target: Value<'ctx, 'func, T>,
+        field: Ident,
         value: Value<'ctx, 'func, V>,
-    ) -> Value<'ctx, 'func, T> {
-        todo!()
+    ){
+        let ty = match target.ty.to_type() {
+            Type::Aggregate(id) => {
+                if let Some((_, ty)) = self
+                    .ctx
+                    .get_aggregate(id)
+                    .fields
+                    .iter()
+                    .find(|(key, _)| key == &field)
+                {
+                    ty.clone()
+                } else {
+                    panic!("aggregate has no field")
+                }
+            }
+            Type::Interface(id) => {
+                if let Some((_, ty)) = self
+                    .ctx
+                    .get_interface(id)
+                    .fields
+                    .iter()
+                    .find(|(key, _)| key == &field)
+                {
+                    ty.clone()
+                } else {
+                    panic!("interface has no field")
+                }
+            }
+            Type::SmartPointer(p)
+            | Type::Pointer(p) => match p.as_ref() {
+                Type::Aggregate(id) => {
+                    if let Some((_, ty)) = self
+                        .ctx
+                        .get_aggregate(*id)
+                        .fields
+                        .iter()
+                        .find(|(key, _)| key == &field)
+                    {
+                        ty.clone()
+                    } else {
+                        panic!("aggregate has no field")
+                    }
+                }
+                Type::Interface(id) => {
+                    if let Some((_, ty)) = self
+                        .ctx
+                        .get_interface(*id)
+                        .fields
+                        .iter()
+                        .find(|(key, _)| key == &field)
+                    {
+                        ty.clone()
+                    } else {
+                        panic!("interface has no field")
+                    }
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+
+        if value.ty.to_type() != ty{
+            panic!("type not match")
+        }
+
+        self.block.inst.push(MIR::InsertValue(target.id, field, value.id));
+
+        return;
+    }
+
+    pub fn create_stack_slot<T: MarkerType<'ctx>>(&mut self, value: Value<'ctx, 'func, T>) -> StackSlot<'ctx, 'func, T> {
+        let id = self.func.stackslots.len();
+        self.func.stackslots.push(value.ty.to_type());
+
+        self.block.inst.push(MIR::CreateStackSlot(StackSlotID(id), value.id));
+
+        StackSlot {
+            id: StackSlotID(id),
+            ty: value.ty,
+            _mark: PhantomData,
+        }
     }
 
     pub fn stack_load<T: MarkerType<'ctx>>(
@@ -1017,7 +1113,19 @@ where
         func: Value<'ctx, 'func, types::Function<'ctx, Arg, R>>,
         args: &Arg::ArgValues<'func>,
     ) -> Value<'ctx, 'func, R> {
-        todo!()
+        
+        if args.len() != func.ty.args.len(){
+            panic!("arguments not match")
+        };
+
+
+        let id = self.block.new_id(func.ty.return_.to_type());
+
+        return Value { 
+            id, 
+            ty: func.ty.return_, 
+            _mark: PhantomData
+        }
     }
 
     /// this function calls a function directly.

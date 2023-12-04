@@ -151,8 +151,11 @@ pub enum MIR<'ctx> {
     InsertValue(ValueID, Ident, ValueID),
 
     /// converts one interface to another
+    AggregateToInterface(ValueID, InterfaceID<'ctx>, ValueID),
+    /// converts one interface to another
     InterfaceToInterface(ValueID, InterfaceID<'ctx>, ValueID),
 
+    CreateStackSlot(StackSlotID, ValueID),
     /// loads from the stack
     StackLoad(StackSlotID, u64, ValueID),
     /// stores to the stack

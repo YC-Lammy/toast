@@ -1,8 +1,8 @@
 pub mod ast;
-mod common;
-pub mod transform;
 mod checks;
+mod common;
 mod symbol_table;
+pub mod transform;
 
 //pub mod passes;
 

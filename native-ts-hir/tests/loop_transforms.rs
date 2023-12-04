@@ -5,7 +5,7 @@ use native_ts_hir::transform::Transformer;
 fn test_for_in_loop() {
     let s = r#"
     for (let i in []){
-        i+=(99);
+        i += (99)
     }
     "#;
     let parser = native_ts_parser::Parser::new();
@@ -17,7 +17,7 @@ fn test_for_in_loop() {
         let mut t = Transformer::new();
 
         let re = t.transform_module(module.module).expect("parse error");
-        let mut formatter = Formatter::new();
+        let mut formatter = Formatter::new(&re.table);
         formatter.format_module(&re);
 
         let formated = formatter.emit_string();
@@ -41,7 +41,7 @@ fn test_for_of_loop() {
         let mut t = Transformer::new();
 
         let re = t.transform_module(module.module).expect("parse error");
-        let mut formatter = Formatter::new();
+        let mut formatter = Formatter::new(&re.table);
         formatter.format_module(&re);
 
         let formated = formatter.emit_string();
