@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use types::{Auto, FunctionType, IntoMarkerType, Smart, ValueIndex};
+use types::{Auto, FunctionType, Smart, ValueIndex};
 
 use crate::function::{BlockDesc, Function};
 use crate::mir::{FCond, ICond, Ordering, MIR};
@@ -1085,9 +1085,12 @@ where
         );
     }
 
+    /// unconditional jump
     pub fn jump(&mut self, block: Block<'func>) {
         self.block.inst.push(MIR::Jump(block.id))
     }
+
+    /// branch if zero
     pub fn brz<I: IntMarkerType>(
         &mut self,
         test: Value<'ctx, 'func, I>,
@@ -1096,6 +1099,8 @@ where
     ) {
         self.block.inst.push(MIR::Brz(test.id, then.id, else_.id));
     }
+
+    /// branch if non zero
     pub fn brnz<I: IntMarkerType>(
         &mut self,
         test: Value<'ctx, 'func, I>,
@@ -1104,6 +1109,8 @@ where
     ) {
         self.block.inst.push(MIR::Brnz(test.id, then.id, else_.id));
     }
+
+    /// returns from a function
     pub fn return_<T: MarkerType<'ctx>>(&mut self, value: Option<Value<'ctx, 'func, T>>) {
         self.block.inst.push(MIR::Return(value.map(|v| v.id)));
     }
@@ -1114,13 +1121,30 @@ where
         args: &Arg::ArgValues<'func>,
     ) -> Value<'ctx, 'func, R> {
         
-        if args.len() != func.ty.args.len(){
+        let args_len = args.len();
+        let ty_len = func.ty.args.len();
+
+        if args_len != ty_len{
             panic!("arguments not match")
         };
 
+        let mut arg_values = Vec::new();
+
+        for i in 0..ty_len{
+            let arg = args.get(i);
+            if arg.ty.inner != func.ty.args.get(i){
+                panic!("argument type not match")
+            }
+            arg_values.push(arg.id);
+        }
 
         let id = self.block.new_id(func.ty.return_.to_type());
 
+        self.block.inst.push(MIR::CallIndirect { 
+            func: func.id, 
+            args: arg_values.into_boxed_slice(), 
+            return_: id 
+        });
         return Value { 
             id, 
             ty: func.ty.return_, 
@@ -1165,5 +1189,14 @@ where
             },
             _mark: PhantomData,
         };
+    }
+
+    /// allocate a smart pointer.
+    /// 
+    /// smart pointers must be stored in a stack slot.
+    /// Its SSA representation should not be used. 
+    /// Instead, load the smart pointer from stackslot every time value is accessed.
+    pub fn smart_malloc<T:MarkerType<'ctx>>(&mut self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, Smart<T>>{
+        
     }
 }
