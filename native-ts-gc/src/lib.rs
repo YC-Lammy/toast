@@ -2,7 +2,6 @@ extern crate alloc;
 
 mod heap;
 mod cell;
-mod channel;
 mod thread;
 
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
@@ -69,9 +68,7 @@ lazy_static::lazy_static!{
     static ref WORK:(Sender<Box<dyn Fn() + Send>>, Receiver<Box<dyn Fn() + Send>>) = crossbeam_channel::unbounded();
 }
 
-#[no_mangle]
-#[export_name = "runtime.gc_safe_point"]
-pub extern "C" fn safe_point(){
+pub fn safe_point(){
     unsafe{
         if ALLOCATOR.gc_grey_scanning_phase.load(Ordering::SeqCst) {
             ALLOCATOR.threads_at_safe_point.fetch_add(1, Ordering::SeqCst);
@@ -86,9 +83,7 @@ pub extern "C" fn safe_point(){
     }
 }
 
-#[no_mangle]
-#[export_name = "runtime.gc_write_barrier"]
-pub extern "C" fn write_barrier(ptr: &mut cell::Cell, slot: &mut *mut cell::Cell, value: &mut cell::Cell){
+pub fn write_barrier(ptr: &mut cell::Cell, slot: &mut *mut cell::Cell, value: &mut cell::Cell){
     unsafe{
         if ALLOCATOR.gc_running.load(Ordering::Relaxed){
             ptr.header.flags.set_grey();
@@ -104,33 +99,36 @@ pub extern "C" fn write_barrier(ptr: &mut cell::Cell, slot: &mut *mut cell::Cell
     
 }
 
-#[no_mangle]
-#[export_name = "runtime.gc_allocate"]
-pub unsafe extern "C" fn allocate(size: usize) -> &'static mut cell::Cell{
+pub fn allocate(size: usize) -> &'static mut cell::Cell{
     // a possible safe point
     safe_point();
 
-    if ALLOCATOR.allocations.fetch_add(1, Ordering::Relaxed) == ALLOCATION_PER_GC{
-        ALLOCATOR.allocations.store(0, Ordering::SeqCst);
-        garbage_collect();
-    }
-    
-    match size + core::mem::size_of::<CellHeader>(){
-        16 => ALLOCATOR.heap16.allocate(),
-        32 => ALLOCATOR.heap32.allocate(),
-        64 => ALLOCATOR.heap64.allocate(),
-        128 => ALLOCATOR.heap128.allocate(),
-        256 => ALLOCATOR.heap256.allocate(),
-        512 => ALLOCATOR.heap512.allocate(),
-        _ => {
-            todo!()
+    unsafe{
+        if ALLOCATOR.allocations.fetch_add(1, Ordering::Relaxed) == ALLOCATION_PER_GC{
+            ALLOCATOR.allocations.store(0, Ordering::SeqCst);
+            garbage_collect();
+        }
+        
+        match size + core::mem::size_of::<CellHeader>(){
+            16 => ALLOCATOR.heap16.allocate(),
+            32 => ALLOCATOR.heap32.allocate(),
+            64 => ALLOCATOR.heap64.allocate(),
+            128 => ALLOCATOR.heap128.allocate(),
+            256 => ALLOCATOR.heap256.allocate(),
+            512 => ALLOCATOR.heap512.allocate(),
+            _ => {
+                todo!()
+            }
         }
     }
+    
 }
 
-#[no_mangle]
-#[export_name = "runtime.gc_garbage_collect"]
-pub unsafe extern "C" fn garbage_collect(){
+pub fn shade(cell: &mut cell::Cell){
+    cell.header.flags.set_grey();
+}
+
+pub unsafe fn garbage_collect(){
     // set gc running to true
     if ALLOCATOR.gc_running.swap(true, Ordering::SeqCst){
         // gc already running
@@ -142,8 +140,12 @@ pub unsafe extern "C" fn garbage_collect(){
     if !GC_THREAD_LAUNCHED.swap(true, Ordering::SeqCst){
         let handle = std::thread::spawn(||unsafe{
             loop{
-                if ALLOCATOR.gc_marking_phase.load(Ordering::SeqCst){
+                if ALLOCATOR.gc_running.load(Ordering::SeqCst){
+                    // start marking phase
+                    ALLOCATOR.gc_marking_phase.store(true, Ordering::SeqCst);
+
                     // mark roots
+
                     // finish marking phase
                     ALLOCATOR.gc_marking_phase.store(false, Ordering::SeqCst);
 
@@ -180,15 +182,12 @@ pub unsafe extern "C" fn garbage_collect(){
                     // finish gc
                     ALLOCATOR.gc_running.store(false, Ordering::SeqCst);
                 }
-                std::thread::yield_now();
                 std::thread::park();
             };
         });
         ALLOCATOR.gc_thread_handle = Some(handle);
     }
 
-    // start marking phase
-    ALLOCATOR.gc_marking_phase.store(true, Ordering::SeqCst);
     // unpark the gc thread
     ALLOCATOR.gc_thread_handle.as_ref().unwrap().thread().unpark();
     // return and continue execution

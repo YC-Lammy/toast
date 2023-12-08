@@ -7,11 +7,28 @@ use alloc::boxed::Box;
 pub struct ThreadID(libc::pthread_t);
 
 pub struct JoinHandle<T>{
+    thread: Thread,
     _mark: PhantomData<T>
 }
 
+impl<T> JoinHandle<T>{
+    pub fn thread(&self) -> &Thread{
+        return &self.thread
+    }
+}
+
+pub struct Thread{
+    id: ThreadID
+}
+
+impl Thread{
+    pub fn unpark(&self){
+        
+    }
+}
+
 #[cfg(unix)]
-fn spawn<F: Fn() -> T + Send + 'static, T>(f: F) -> JoinHandle<T>{
+pub fn spawn<F: Fn() -> T + Send + 'static, T>(f: F) -> JoinHandle<T>{
     extern "C" fn pthread_wrapper<T, F: Fn() -> T + Send + 'static>(value: *mut libc::c_void) -> *mut libc::c_void{
         unsafe{
             let value = (value as *mut F).as_mut().unwrap_unchecked();
@@ -27,6 +44,9 @@ fn spawn<F: Fn() -> T + Send + 'static, T>(f: F) -> JoinHandle<T>{
         let wrapped = Box::leak(Box::new(f));
         let r = libc::pthread_create(&mut id, &mut attr, pthread_wrapper::<T, F>, wrapped as *mut F as *mut libc::c_void);
 
-        return JoinHandle { _mark: PhantomData }
+        return JoinHandle { 
+            thread: Thread { id: ThreadID(id) },
+            _mark: PhantomData 
+        }
     }   
 }

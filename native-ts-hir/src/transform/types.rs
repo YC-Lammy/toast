@@ -506,7 +506,10 @@ impl Transformer {
 
                 match o.op {
                     swc::TsTypeOperatorOp::KeyOf => {
-                        todo!("keyof type")
+                        match ty{
+                            Type::Map(k, _) => return Ok(*k),
+                            _ => return Err(Error::syntax_error(o.span, "expected index accessing type"))
+                        }
                     }
                     swc::TsTypeOperatorOp::ReadOnly => return Ok(ty),
                     swc::TsTypeOperatorOp::Unique => return Ok(ty),
@@ -516,7 +519,6 @@ impl Transformer {
                 swc::TsThisTypeOrIdent::Ident(_ident) => {
                     if let Some(ty) = &p.type_ann {
                         let _ty = self.translate_type(&ty.type_ann)?;
-
                         return Ok(Type::Bool);
                     } else {
                         return Err(Error::syntax_error(p.span, "missing type annotation"));
