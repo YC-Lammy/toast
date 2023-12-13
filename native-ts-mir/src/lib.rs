@@ -4,6 +4,8 @@ pub mod builder;
 mod context;
 mod function;
 pub mod mir;
+pub mod passes;
+pub mod runtime;
 pub mod types;
 mod util;
 mod value;

@@ -95,6 +95,8 @@ pub enum Type<'ctx> {
 
     /// a future
     Future(Box<Type<'ctx>>),
+    /// a generator, yield, resume, return
+    Generator(Box<(Type<'ctx>, Type<'ctx>, Type<'ctx>)>),
 
     SIMDx2(ScalarType),
     SIMDx4(ScalarType),
@@ -123,33 +125,6 @@ impl<'ctx> Type<'ctx> {
             _ => 0,
         }
     }
-
-    pub fn size(&self, ctx: &'ctx ()) -> usize {
-        match self {
-            Self::Void => 0,
-            Self::U8 | Self::I8 => 1,
-            Self::U16 | Self::I16 => 2,
-            Self::U32 | Self::I32 => 4,
-            Self::U64 | Self::I64 => 8,
-
-            Self::F32 => 4,
-            Self::F64 => 8,
-
-            Self::Usize | Self::Isize | Self::Pointer(_) | Self::SmartPointer(_) | Self::Function(_) => todo!(),
-            Self::Aggregate(_) => todo!(),
-            Self::Interface(_) => todo!(),
-            Self::Future(_) => todo!(),
-            Self::Array(a) => a.0.size(ctx) * a.1 as usize,
-            Self::SIMDx2(m) => m.size() * 2,
-            Self::SIMDx4(m) => m.size() * 4,
-            Self::SIMDx8(m) => m.size() * 8,
-            Self::SIMDx16(m) => m.size() * 16,
-            Self::SIMDx32(m) => m.size() * 32,
-            Self::SIMDx64(m) => m.size() * 64,
-            Self::SIMDx128(m) => m.size() * 128,
-            Self::SIMDx256(m) => m.size() * 256,
-        }
-    }
 }
 
 mod seal {
@@ -160,23 +135,21 @@ pub trait MarkerType<'ctx>: seal::Sealed + Clone {
     fn to_type(&self) -> Type<'ctx>;
 }
 
-pub trait IntoMarkerType<'ctx>{
+pub trait IntoMarkerType<'ctx> {
     type Marker: MarkerType<'ctx>;
     fn into(self) -> Self::Marker;
 }
 
-impl<'ctx, T: MarkerType<'ctx>> IntoMarkerType<'ctx> for T{
+impl<'ctx, T: MarkerType<'ctx>> IntoMarkerType<'ctx> for T {
     type Marker = Self;
     fn into(self) -> Self::Marker {
-        return self
+        return self;
     }
 }
-impl<'ctx> IntoMarkerType<'ctx> for Type<'ctx>{
+impl<'ctx> IntoMarkerType<'ctx> for Type<'ctx> {
     type Marker = Auto<'ctx>;
     fn into(self) -> Self::Marker {
-        Auto{
-            inner: self
-        }
+        Auto { inner: self }
     }
 }
 
@@ -328,7 +301,11 @@ impl_float_marker!(F64, f64);
 impl_float_marker!(F32, f32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Function<'ctx, Arg: FunctionArgs<'ctx> = AutoArgs<'ctx>, R: MarkerType<'ctx> = Auto<'ctx>> {
+pub struct Function<
+    'ctx,
+    Arg: FunctionArgs<'ctx> = AutoArgs<'ctx>,
+    R: MarkerType<'ctx> = Auto<'ctx>,
+> {
     pub args: Arg,
     pub return_: R,
     pub(crate) _mark: PhantomData<&'ctx ()>,
@@ -353,20 +330,20 @@ impl<'ctx, Arg: FunctionArgs<'ctx>, R: MarkerType<'ctx>> MarkerType<'ctx>
 }
 
 pub trait FunctionArgs<'ctx>: Clone {
-    type ArgValues<'func>:ValueIndex<'ctx, 'func> + ?Sized;
+    type ArgValues<'func>: ValueIndex<'ctx, 'func> + ?Sized;
     fn len(&self) -> usize;
     fn get(&self, index: usize) -> Type<'ctx>;
 }
 
-pub trait ValueIndex<'ctx, 'func>{
+pub trait ValueIndex<'ctx, 'func> {
     fn len(&self) -> usize;
     fn get(&self, index: usize) -> Value<'ctx, 'func, Auto<'ctx>>;
 }
 
 #[derive(Clone)]
-pub struct AutoArgs<'ctx>(Box<[Type<'ctx>]>);
+pub struct AutoArgs<'ctx>(pub(crate) Box<[Type<'ctx>]>);
 
-impl<'ctx> FunctionArgs<'ctx> for AutoArgs<'ctx>{
+impl<'ctx> FunctionArgs<'ctx> for AutoArgs<'ctx> {
     type ArgValues<'func> = [Value<'ctx, 'func, Auto<'ctx>>];
     fn len(&self) -> usize {
         self.0.len()
@@ -376,7 +353,7 @@ impl<'ctx> FunctionArgs<'ctx> for AutoArgs<'ctx>{
     }
 }
 
-impl<'ctx, 'func> ValueIndex<'ctx, 'func> for [Value<'ctx, 'func, Auto<'ctx>>]{
+impl<'ctx, 'func> ValueIndex<'ctx, 'func> for [Value<'ctx, 'func, Auto<'ctx>>] {
     fn len(&self) -> usize {
         self.len()
     }
@@ -395,7 +372,7 @@ impl<'ctx> FunctionArgs<'ctx> for () {
     }
 }
 
-impl<'ctx, 'func> ValueIndex<'ctx, 'func> for (){
+impl<'ctx, 'func> ValueIndex<'ctx, 'func> for () {
     fn len(&self) -> usize {
         0
     }
@@ -417,14 +394,14 @@ impl<'ctx, T: MarkerType<'ctx>> FunctionArgs<'ctx> for T {
     }
 }
 
-impl<'ctx, 'func, T:MarkerType<'ctx>> ValueIndex<'ctx, 'func> for Value<'ctx, 'func, T>{
+impl<'ctx, 'func, T: MarkerType<'ctx>> ValueIndex<'ctx, 'func> for Value<'ctx, 'func, T> {
     fn len(&self) -> usize {
         1
     }
     fn get(&self, index: usize) -> Value<'ctx, 'func, Auto<'ctx>> {
-        if index == 0{
+        if index == 0 {
             self.into_auto()
-        } else{
+        } else {
             unreachable!()
         }
     }
@@ -539,7 +516,7 @@ impl<'ctx> MarkerType<'ctx> for Aggregate<'ctx> {
 }
 impl<'ctx> FieldedMarkerType<'ctx> for Aggregate<'ctx> {}
 impl<'ctx> FieldedMarkerType<'ctx> for Pointer<Aggregate<'ctx>> {}
-impl<'ctx> FieldedMarkerType<'ctx> for Smart<Aggregate<'ctx>>{}
+impl<'ctx> FieldedMarkerType<'ctx> for Smart<Aggregate<'ctx>> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Interface<'ctx>(pub InterfaceID<'ctx>);
@@ -552,8 +529,8 @@ impl<'ctx> MarkerType<'ctx> for Interface<'ctx> {
     }
 }
 impl<'ctx> FieldedMarkerType<'ctx> for Interface<'ctx> {}
-impl<'ctx> FieldedMarkerType<'ctx> for Pointer<Interface<'ctx>>{}
-impl<'ctx> FieldedMarkerType<'ctx> for Smart<Interface<'ctx>>{}
+impl<'ctx> FieldedMarkerType<'ctx> for Pointer<Interface<'ctx>> {}
+impl<'ctx> FieldedMarkerType<'ctx> for Smart<Interface<'ctx>> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Array<T> {
@@ -611,6 +588,30 @@ impl<'ctx, T: MarkerType<'ctx>> seal::Sealed for Future<T> {}
 impl<'ctx, T: MarkerType<'ctx>> MarkerType<'ctx> for Future<T> {
     fn to_type(&self) -> Type<'ctx> {
         Type::Future(Box::new(self.value.to_type()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Generator<Y, RE, R> {
+    pub yield_: Y,
+    pub resume: RE,
+    pub return_: R,
+}
+
+impl<'ctx, Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>> seal::Sealed
+    for Generator<Y, RE, R>
+{
+}
+
+impl<'ctx, Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>> MarkerType<'ctx>
+    for Generator<Y, RE, R>
+{
+    fn to_type(&self) -> Type<'ctx> {
+        Type::Generator(Box::new((
+            self.yield_.to_type(),
+            self.resume.to_type(),
+            self.return_.to_type(),
+        )))
     }
 }
 

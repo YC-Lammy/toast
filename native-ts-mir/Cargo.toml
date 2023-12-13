@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 parking_lot = "*"
 paste = "1.0"
+
+inkwell = {version="0.2", features=["llvm16-0"]}

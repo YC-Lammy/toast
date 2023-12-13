@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use types::{Auto, FunctionType, Smart, ValueIndex};
+use types::{Auto, FunctionType, Future, Smart, ValueIndex, AutoArgs};
 
 use crate::function::{BlockDesc, Function};
 use crate::mir::{FCond, ICond, Ordering, MIR};
@@ -10,7 +10,7 @@ use crate::types::{
     IntMathMarkerType, Interface, IntoFloatMarkerType, IntoIntMarkerType, IntoScalarMarkerType,
     MarkerType, MathMarkerType, Pointer, ScalarMarkerType, Type, I32, I8, SIMD,
 };
-use crate::util::{AggregateID, BlockID, FunctionID, Ident, InterfaceID, StackSlotID};
+use crate::util::{AggregateID, BlockID, FunctionID, Ident, InterfaceID, StackSlotID, ValueID};
 pub use crate::Value;
 use crate::{types, Context};
 
@@ -51,42 +51,83 @@ where
     }
 
     pub fn switch_to_block(&mut self, block: Block<'func>) {
-        let block:&mut BlockDesc = self.func
-                    .blocks
-                    .iter_mut()
-                    .rev()
-                    .find(|b| b.id == block.id)
-                    .expect("Trying to get instruction builder without declaring block");
+        let block: &mut BlockDesc = self
+            .func
+            .blocks
+            .iter_mut()
+            .rev()
+            .find(|b| b.id == block.id)
+            .expect("Trying to get instruction builder without declaring block");
 
-        self.current_block = unsafe{core::mem::transmute(block)};
+        self.current_block = unsafe { core::mem::transmute(block) };
     }
 
-    pub fn inst<'builder>(&'builder mut self) -> InstBuilder<'ctx, 'func, 'builder>{
+    pub fn global_function(&mut self, id: FunctionID<'ctx>) -> Value<'ctx, 'func, types::Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>>{
+        let f = &self.ctx.functions[id.id];
+        let params = f.ty.params.clone();
+        let return_ty = f.ty.return_.clone();
+
+        let id = ValueID::new();
+        self.ctx.map_ssa_function.insert(id, id.0);
+
+        return Value { 
+            id, 
+            ty: types::Function{
+                args: AutoArgs(params),
+                return_: Auto { inner: return_ty.clone(),
+                },
+                _mark: PhantomData
+            }, _mark: PhantomData 
+        }
+    }
+
+    pub fn inst<'builder>(&'builder mut self) -> InstBuilder<'ctx, 'func, 'builder> {
         InstBuilder {
             ctx: self.ctx,
             func: self.func,
             block: self.current_block,
-            _mark: PhantomData
+            _mark: PhantomData,
         }
     }
 }
 pub struct InstBuilder<'ctx, 'func, 'builder>
 where
-    'ctx: 'func, 'func: 'builder
+    'ctx: 'func,
+    'func: 'builder,
 {
     ctx: &'builder mut Context,
     func: &'builder mut Function<'ctx>,
     block: &'builder mut crate::function::BlockDesc<'ctx>,
-    _mark: PhantomData<&'func ()>
+    _mark: PhantomData<&'func ()>,
 }
 
 impl<'ctx, 'func, 'builder> InstBuilder<'ctx, 'func, 'builder>
 where
     'ctx: 'func,
 {
+    fn new_ssa(&mut self, _ty: Type<'ctx>) -> ValueID{
+        ValueID::new()
+    }
+
+    pub fn read_param(&mut self, index: usize) -> Option<Value<'ctx, 'func, Auto<'ctx>>>{
+        if let Some(ty) = self.func.params.get(index){
+            let ty = ty.clone();
+            let id = self.new_ssa(ty.clone());
+
+            self.block.inst.push(MIR::ReadParam(index, id));
+
+            return Some(Value { 
+                id: id, 
+                ty: Auto { inner: ty }, 
+                _mark: PhantomData 
+            })
+        }
+        return None;
+    }
+
     /// an integer constant
     pub fn iconst<I: IntoIntMarkerType>(&mut self, value: I) -> Value<'ctx, 'func, I::Marker> {
-        let id = self.block.new_id(I::Marker::default().to_type());
+        let id = self.new_ssa(I::Marker::default().to_type());
         self.block.inst.push(MIR::Iconst(value.to_i128(), id));
 
         return Value {
@@ -98,7 +139,7 @@ where
 
     /// a floating point constant
     pub fn fconst<F: IntoFloatMarkerType>(&mut self, value: F) -> Value<'ctx, 'func, F::Marker> {
-        let id = self.block.new_id(F::Marker::default().to_type());
+        let id = self.new_ssa(F::Marker::default().to_type());
 
         if core::mem::size_of::<F>() == 8 {
             let v = unsafe { *(&value as *const F as *const f64) };
@@ -123,7 +164,7 @@ where
     where
         crate::types::simd::LaneCount<N>: crate::types::simd::SupportedLaneCount,
     {
-        let id = self.block.new_id(SIMD::<T::Marker, N>::default().to_type());
+        let id = self.new_ssa(SIMD::<T::Marker, N>::default().to_type());
         unsafe {
             let layout = alloc::alloc::Layout::for_value(&values);
             let ptr = alloc::alloc::alloc(layout);
@@ -144,11 +185,12 @@ where
         };
     }
 
+    /// negative value
     pub fn neg<T: MathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Neg(value.id, id));
 
         return Value {
@@ -158,11 +200,12 @@ where
         };
     }
 
+    /// absolute value
     pub fn abs<T: MathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Abs(value.id, id));
 
         return Value {
@@ -177,7 +220,7 @@ where
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
 
         self.block.inst.push(MIR::Add(a.id, b.id, id));
 
@@ -192,7 +235,7 @@ where
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Sub(a.id, b.id, id));
 
         return Value {
@@ -201,12 +244,14 @@ where
             _mark: PhantomData,
         };
     }
+
+    /// multiply
     pub fn mul<T: MathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
 
         self.block.inst.push(MIR::Mul(a.id, b.id, id));
 
@@ -216,12 +261,14 @@ where
             _mark: PhantomData,
         };
     }
+
+    /// exponent
     pub fn exp<T: MathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Exp(a.id, b.id, id));
 
         return Value {
@@ -230,12 +277,14 @@ where
             _mark: PhantomData,
         };
     }
+
+    /// remainder
     pub fn rem<T: MathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Rem(a.id, b.id, id));
 
         return Value {
@@ -244,12 +293,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// division
     pub fn div<T: MathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, T>,
         b: Value<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Div(a.id, b.id, id));
 
         return Value {
@@ -258,13 +308,14 @@ where
             _mark: PhantomData,
         };
     }
+    /// shift left
     pub fn shl<I: IntMathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
-        self.block.inst.push(MIR::IShl(a.id, b.id, id));
+        let id = self.new_ssa(a.ty.to_type());
+        self.block.inst.push(MIR::Shl(a.id, b.id, id));
 
         return Value {
             id,
@@ -272,13 +323,14 @@ where
             _mark: PhantomData,
         };
     }
+    /// shift right
     pub fn shr<I: IntMathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
-        self.block.inst.push(MIR::IShr(a.id, b.id, id));
+        let id = self.new_ssa(a.ty.to_type());
+        self.block.inst.push(MIR::Shr(a.id, b.id, id));
 
         return Value {
             id,
@@ -286,12 +338,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise and
     pub fn bitand<I: IntMathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Bitand(a.id, b.id, id));
 
         return Value {
@@ -300,12 +353,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise or
     pub fn bitor<I: IntMathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::BitOr(a.id, b.id, id));
 
         return Value {
@@ -314,12 +368,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise xor
     pub fn bitxor<I: IntMathMarkerType>(
         &mut self,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Bitxor(a.id, b.id, id));
 
         return Value {
@@ -328,11 +383,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise not
     pub fn bitnot<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Bitnot(value.id, id));
 
         return Value {
@@ -341,11 +397,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise reverse
     pub fn bitrev<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Bitrev(value.id, id));
 
         return Value {
@@ -354,11 +411,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise swap
     pub fn bitswap<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Bitswap(value.id, id));
 
         return Value {
@@ -367,11 +425,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// count one bits
     pub fn count_ones<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::BitOnes(value.id, id));
 
         return Value {
@@ -380,11 +439,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// count leading zero bits
     pub fn leading_zeros<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::BitLeadingZeros(value.id, id));
 
         return Value {
@@ -393,11 +453,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// count trailing zero bits
     pub fn trailing_zeros<I: IntMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::BitTrailingZeros(value.id, id));
 
         return Value {
@@ -406,13 +467,14 @@ where
             _mark: PhantomData,
         };
     }
+    /// cast a type to another
     pub fn bitcast<T: MarkerType<'ctx>, U: MarkerType<'ctx>>(
         &mut self,
         value: Value<'ctx, 'func, T>,
         ty: U,
     ) -> Value<'ctx, 'func, U> {
-        let id = self.block.new_id(ty.to_type());
-        self.block.inst.push(MIR::Bitnot(value.id, id));
+        let id = self.new_ssa(ty.to_type());
+        self.block.inst.push(MIR::Bitcast(value.id, id));
 
         return Value {
             id,
@@ -427,7 +489,7 @@ where
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Icmp(cond, a.id, b.id, id));
 
         return Value {
@@ -442,7 +504,7 @@ where
         a: Value<'ctx, 'func, F>,
         b: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Fcmp(cond, a.id, b.id, id));
 
         return Value {
@@ -457,7 +519,7 @@ where
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Min(a.id, b.id, id));
 
         return Value {
@@ -471,7 +533,7 @@ where
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Max(a.id, b.id, id));
 
         return Value {
@@ -482,11 +544,11 @@ where
     }
     pub fn select<I: IntMathMarkerType>(
         &mut self,
-        test: Value<'ctx, 'func, I>,
+        test: Value<'ctx, 'func, I8>,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block.inst.push(MIR::Select(test.id, a.id, b.id, id));
 
         return Value {
@@ -495,13 +557,14 @@ where
             _mark: PhantomData,
         };
     }
+    /// bitwise select
     pub fn bitselect<I: IntMathMarkerType>(
         &mut self,
         test: Value<'ctx, 'func, I>,
         a: Value<'ctx, 'func, I>,
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
-        let id = self.block.new_id(a.ty.to_type());
+        let id = self.new_ssa(a.ty.to_type());
         self.block
             .inst
             .push(MIR::BitSelect(test.id, a.id, b.id, id));
@@ -512,12 +575,12 @@ where
             _mark: PhantomData,
         };
     }
-
+    /// sqroot
     pub fn sqrt<F: FloatMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Sqrt(value.id, id));
 
         return Value {
@@ -526,11 +589,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// sin in radiant
     pub fn sin<F: FloatMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Sin(value.id, id));
 
         return Value {
@@ -539,11 +603,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// cos in radiant
     pub fn cos<F: FloatMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Cos(value.id, id));
 
         return Value {
@@ -552,12 +617,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// power to integer
     pub fn powi<F: FloatMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
         exponent: Value<'ctx, 'func, I32>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Powi(value.id, exponent.id, id));
 
         return Value {
@@ -566,12 +632,13 @@ where
             _mark: PhantomData,
         };
     }
+    /// power to float
     pub fn powf<F: FloatMathMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
         exponent: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Powf(value.id, exponent.id, id));
 
         return Value {
@@ -580,11 +647,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// floor
     pub fn floor<F: FloatMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Floor(value.id, id));
 
         return Value {
@@ -593,11 +661,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// ceil
     pub fn ceil<F: FloatMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Ceil(value.id, id));
 
         return Value {
@@ -606,11 +675,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// round
     pub fn round<F: FloatMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
-        let id = self.block.new_id(value.ty.to_type());
+        let id = self.new_ssa(value.ty.to_type());
         self.block.inst.push(MIR::Round(value.id, id));
 
         return Value {
@@ -623,7 +693,7 @@ where
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, F::Marker> {
-        let id = self.block.new_id(F::Marker::default().to_type());
+        let id = self.new_ssa(F::Marker::default().to_type());
         self.block.inst.push(MIR::IntToFloat(value.id, id));
 
         return Value {
@@ -636,7 +706,7 @@ where
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, I::Marker> {
-        let id = self.block.new_id(I::Marker::default().to_type());
+        let id = self.new_ssa(I::Marker::default().to_type());
         self.block.inst.push(MIR::FloatToInt(value.id, id));
 
         return Value {
@@ -645,11 +715,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// extend or reduce bits to cast integer to another
     pub fn int_cast<U: IntoIntMarkerType, I: IntMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, U::Marker> {
-        let id = self.block.new_id(U::Marker::default().to_type());
+        let id = self.new_ssa(U::Marker::default().to_type());
         self.block.inst.push(MIR::IntCast(value.id, id));
 
         return Value {
@@ -658,11 +729,12 @@ where
             _mark: PhantomData,
         };
     }
+    /// cast between f64 and f32
     pub fn float_cast<U: IntoFloatMarkerType, F: FloatMarkerType>(
         &mut self,
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, U::Marker> {
-        let id = self.block.new_id(U::Marker::default().to_type());
+        let id = self.new_ssa(U::Marker::default().to_type());
         self.block.inst.push(MIR::FloatCast(value.id, id));
 
         return Value {
@@ -671,6 +743,7 @@ where
             _mark: PhantomData,
         };
     }
+    /// extract an element from vector
     pub fn extract_element<T: ScalarMarkerType, const N: usize>(
         &mut self,
         vector: Value<'ctx, 'func, SIMD<T, N>>,
@@ -682,7 +755,7 @@ where
         if index as usize >= N {
             panic!("index larger then lanes")
         }
-        let id = self.block.new_id(T::default().to_type());
+        let id = self.new_ssa(T::default().to_type());
         self.block
             .inst
             .push(MIR::ExtractElement(vector.id, index as _, id));
@@ -693,6 +766,7 @@ where
             _mark: PhantomData,
         };
     }
+    /// insert an element to vector
     pub fn insert_element<T: ScalarMarkerType, const N: usize>(
         &mut self,
         vector: Value<'ctx, 'func, SIMD<T, N>>,
@@ -705,7 +779,7 @@ where
         if index as usize >= N {
             panic!("index larger then lanes")
         }
-        let id = self.block.new_id(vector.ty.to_type());
+        let id = self.new_ssa(vector.ty.to_type());
         self.block
             .inst
             .push(MIR::InsertElement(vector.id, value.id, index as _, id));
@@ -733,7 +807,7 @@ where
                 panic!("mismatch type")
             }
         }
-        let id = self.block.new_id(Type::Aggregate(ty));
+        let id = self.new_ssa(Type::Aggregate(ty));
 
         self.block
             .inst
@@ -750,27 +824,33 @@ where
         value: Value<'ctx, 'func, Smart<Aggregate<'ctx>>>,
         iface: InterfaceID<'ctx>,
     ) -> Value<'ctx, 'func, Interface<'ctx>> {
-        
         let agg = self.ctx.get_aggregate(value.ty.pointee.0);
         let interface = self.ctx.get_interface(iface);
 
-        if agg.fields.len() < interface.fields.len(){
+        if agg.fields.len() < interface.fields.len() {
             panic!("aggregate type does not match interface")
         }
 
-        for (ident, ty) in &interface.fields{
-            if agg.fields.iter().find(|(k, t)|k == ident && t == ty).is_none(){
+        for (ident, ty) in &interface.fields {
+            if agg
+                .fields
+                .iter()
+                .find(|(k, t)| k == ident && t == ty)
+                .is_none()
+            {
                 panic!("aggregate type does not match interface")
             }
         }
-        let id = self.block.new_id(Type::Interface(iface));
-        self.block.inst.push(MIR::AggregateToInterface(value.id, iface, id));
+        let id = self.new_ssa(Type::Interface(iface));
+        self.block
+            .inst
+            .push(MIR::AggregateToInterface(value.id, iface, id));
 
-        return Value { 
-            id: id, 
-            ty: Interface(iface), 
-            _mark: PhantomData
-        }
+        return Value {
+            id: id,
+            ty: Interface(iface),
+            _mark: PhantomData,
+        };
     }
     pub fn interface_to_interface(
         &mut self,
@@ -796,7 +876,7 @@ where
             }
         }
 
-        let id = self.block.new_id(Type::Interface(iface));
+        let id = self.new_ssa(Type::Interface(iface));
 
         // insert instruction
         self.block
@@ -844,8 +924,7 @@ where
                     panic!("interface has no field")
                 }
             }
-            Type::SmartPointer(p)
-            | Type::Pointer(p) => match p.as_ref() {
+            Type::SmartPointer(p) | Type::Pointer(p) => match p.as_ref() {
                 Type::Aggregate(id) => {
                     if let Some((_, ty)) = self
                         .ctx
@@ -878,17 +957,19 @@ where
         };
 
         // the lifetime of type is phanom and can be safely transmuted
-        let id = self
-            .block
-            .new_id(unsafe { core::mem::transmute(ty.clone()) });
+        let ty: Type<'_> = unsafe { core::mem::transmute(ty.clone())};
+        
+        let id = self.new_ssa(ty.clone());
 
         // insert instruction
-        self.block.inst.push(MIR::ExtractValue(target.id, field, id));
+        self.block
+            .inst
+            .push(MIR::ExtractValue(target.id, field, id));
 
         return Value {
             id,
             ty: Auto {
-                inner: unsafe { core::mem::transmute(ty) },
+                inner: ty,
             },
             _mark: PhantomData,
         };
@@ -896,14 +977,14 @@ where
 
     /// inserts a value to a field
     /// Accepts aggregate, interface, pointer to aggregate or pointer to interface.
-    /// 
+    ///
     /// if garbage collection is enabled, this will be lowered to a call to write barrier
     pub fn insert_value<T: FieldedMarkerType<'ctx>, V: MarkerType<'ctx>>(
         &mut self,
         target: Value<'ctx, 'func, T>,
         field: Ident,
         value: Value<'ctx, 'func, V>,
-    ){
+    ) {
         let ty = match target.ty.to_type() {
             Type::Aggregate(id) => {
                 if let Some((_, ty)) = self
@@ -931,8 +1012,7 @@ where
                     panic!("interface has no field")
                 }
             }
-            Type::SmartPointer(p)
-            | Type::Pointer(p) => match p.as_ref() {
+            Type::SmartPointer(p) | Type::Pointer(p) => match p.as_ref() {
                 Type::Aggregate(id) => {
                     if let Some((_, ty)) = self
                         .ctx
@@ -964,20 +1044,28 @@ where
             _ => unreachable!(),
         };
 
-        if value.ty.to_type() != ty{
+        if value.ty.to_type() != ty {
             panic!("type not match")
         }
 
-        self.block.inst.push(MIR::InsertValue(target.id, field, value.id));
+        self.block
+            .inst
+            .push(MIR::InsertValue(target.id, field, value.id));
 
         return;
     }
 
-    pub fn create_stack_slot<T: MarkerType<'ctx>>(&mut self, value: Value<'ctx, 'func, T>) -> StackSlot<'ctx, 'func, T> {
+    /// allocate a new stack slot
+    pub fn create_stack_slot<T: MarkerType<'ctx>>(
+        &mut self,
+        value: Value<'ctx, 'func, T>,
+    ) -> StackSlot<'ctx, 'func, T> {
         let id = self.func.stackslots.len();
         self.func.stackslots.push(value.ty.to_type());
 
-        self.block.inst.push(MIR::CreateStackSlot(StackSlotID(id), value.id));
+        self.block
+            .inst
+            .push(MIR::CreateStackSlot(StackSlotID(id), value.id));
 
         StackSlot {
             id: StackSlotID(id),
@@ -986,11 +1074,12 @@ where
         }
     }
 
+    /// load value from the stack slot
     pub fn stack_load<T: MarkerType<'ctx>>(
         &mut self,
         slot: StackSlot<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(slot.ty.to_type());
+        let id = self.new_ssa(slot.ty.to_type());
         self.block.inst.push(MIR::StackLoad(slot.id, 0, id));
 
         return Value {
@@ -999,6 +1088,7 @@ where
             _mark: PhantomData,
         };
     }
+    /// write value to the stack slot
     pub fn stack_store<T: MarkerType<'ctx>>(
         &mut self,
         slot: StackSlot<'ctx, 'func, T>,
@@ -1007,13 +1097,12 @@ where
         self.block.inst.push(MIR::StackStore(slot.id, 0, value.id));
     }
 
+    /// retrieve pointer to a stack slot
     pub fn stack_pointer<T: MarkerType<'ctx>>(
         &mut self,
         slot: StackSlot<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, Pointer<T>> {
-        let id = self
-            .block
-            .new_id(Type::Pointer(Box::new(slot.ty.to_type())));
+        let id = self.new_ssa(Type::Pointer(Box::new(slot.ty.to_type())));
         self.block.inst.push(MIR::StackPtr(slot.id, id));
 
         return Value {
@@ -1029,7 +1118,7 @@ where
         &mut self,
         ptr: Value<'ctx, 'func, Pointer<T>>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.block.new_id(ptr.ty.pointee.to_type());
+        let id = self.new_ssa(ptr.ty.pointee.to_type());
         self.block.inst.push(MIR::Load(ptr.id, id));
 
         return Value {
@@ -1038,6 +1127,7 @@ where
             _mark: PhantomData,
         };
     }
+
     pub fn store<T: MarkerType<'ctx>>(
         &mut self,
         ptr: Value<'ctx, 'func, Pointer<T>>,
@@ -1058,8 +1148,8 @@ where
         success_order: Ordering,
         failure_order: Ordering,
     ) -> (Value<'ctx, 'func, T>, Value<'ctx, 'func, I8>) {
-        let loaded_id = self.block.new_id(T::default().to_type());
-        let success_id = self.block.new_id(Type::I8);
+        let loaded_id = self.new_ssa(T::default().to_type());
+        let success_id = self.new_ssa(Type::I8);
 
         self.block.inst.push(MIR::AtomicCompareExchange(Box::new((
             ptr.id,
@@ -1120,36 +1210,35 @@ where
         func: Value<'ctx, 'func, types::Function<'ctx, Arg, R>>,
         args: &Arg::ArgValues<'func>,
     ) -> Value<'ctx, 'func, R> {
-        
         let args_len = args.len();
         let ty_len = func.ty.args.len();
 
-        if args_len != ty_len{
+        if args_len != ty_len {
             panic!("arguments not match")
         };
 
         let mut arg_values = Vec::new();
 
-        for i in 0..ty_len{
+        for i in 0..ty_len {
             let arg = args.get(i);
-            if arg.ty.inner != func.ty.args.get(i){
+            if arg.ty.inner != func.ty.args.get(i) {
                 panic!("argument type not match")
             }
             arg_values.push(arg.id);
         }
 
-        let id = self.block.new_id(func.ty.return_.to_type());
+        let id = self.new_ssa(func.ty.return_.to_type());
 
-        self.block.inst.push(MIR::CallIndirect { 
-            func: func.id, 
-            args: arg_values.into_boxed_slice(), 
-            return_: id 
+        self.block.inst.push(MIR::CallIndirect {
+            func: func.id,
+            args: arg_values.into_boxed_slice(),
+            return_: id,
         });
-        return Value { 
-            id, 
-            ty: func.ty.return_, 
-            _mark: PhantomData
-        }
+        return Value {
+            id,
+            ty: func.ty.return_,
+            _mark: PhantomData,
+        };
     }
 
     /// this function calls a function directly.
@@ -1162,23 +1251,23 @@ where
         let ty: &FunctionType<'ctx> =
             unsafe { core::mem::transmute(self.ctx.get_function_type(id)) };
 
-        if ty.params.len() != args.len(){
+        if ty.params.len() != args.len() {
             panic!("number of arguments not match")
         }
-        for (i, t) in ty.params.iter().enumerate(){
-            if &args[i].ty.inner != t{
+        for (i, t) in ty.params.iter().enumerate() {
+            if &args[i].ty.inner != t {
                 panic!("argument type not match")
             }
         }
 
-        let return_id = self.block.new_id(ty.return_.clone());
+        let return_id = self.new_ssa(ty.return_.clone());
 
         self.block.inst.push(MIR::Call {
             id: FunctionID {
                 id: id.id,
                 _mark: PhantomData,
             },
-            args: args.iter().map(|v|v.id).collect(),
+            args: args.iter().map(|v| v.id).collect(),
             return_: return_id,
         });
 
@@ -1192,11 +1281,73 @@ where
     }
 
     /// allocate a smart pointer.
-    /// 
+    ///
     /// smart pointers must be stored in a stack slot.
-    /// Its SSA representation should not be used. 
+    /// Its SSA values should not be passed around.
     /// Instead, load the smart pointer from stackslot every time value is accessed.
-    pub fn smart_malloc<T:MarkerType<'ctx>>(&mut self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, Smart<T>>{
-        
+    pub fn malloc<T: MarkerType<'ctx>>(
+        &mut self,
+        value: Value<'ctx, 'func, T>,
+    ) -> Value<'ctx, 'func, Smart<T>> {
+        let id = self.new_ssa(value.ty.to_type());
+
+        self.block.inst.push(MIR::Malloc(value.id, id));
+
+        return Value {
+            id,
+            ty: Smart { pointee: value.ty },
+            _mark: PhantomData,
+        };
+    }
+
+    /// frees an allocation
+    /// 
+    /// if GC is choosen, a safepoint is inserted.
+    /// if Arc is choosen, this function does nothing.
+    pub fn free<T: MarkerType<'ctx>>(&mut self, ptr: Value<'ctx, 'func, Smart<T>>){
+        self.block.inst.push(MIR::Free(ptr.id));
+    }
+
+    pub fn await_<T: MarkerType<'ctx>>(
+        &mut self,
+        future: Value<'ctx, 'func, Future<T>>,
+    ) -> Value<'ctx, 'func, T> {
+        if !self.func.is_async{
+            panic!("await in non async function")
+        }
+        let id = self.new_ssa(future.ty.value.to_type());
+
+        self.block.inst.push(MIR::AsyncAwait(future.id, id));
+
+        return Value {
+            id,
+            ty: future.ty.value,
+            _mark: PhantomData,
+        };
+    }
+
+    pub fn yield_<T: MarkerType<'ctx>>(&mut self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, Auto<'ctx>>{
+        if !self.func.is_generator{
+            panic!("yield in non generator function")
+        }
+
+        let resume_ty = if let Type::Generator(gen) = &self.func.return_{
+            if &value.ty.to_type() != &gen.0{
+                panic!("yield type not match")
+            }
+            gen.1.clone()
+        } else{
+            unreachable!()
+        };
+
+        let id = self.new_ssa(resume_ty.clone());
+
+        self.block.inst.push(MIR::Yield(value.id, id));
+
+        return Value { 
+            id, 
+            ty: Auto { inner: resume_ty }, 
+            _mark: PhantomData 
+        }
     }
 }

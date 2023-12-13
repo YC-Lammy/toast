@@ -61,6 +61,8 @@ pub struct SwitchCase {
 
 #[derive(Debug, Clone)]
 pub enum MIR<'ctx> {
+    ReadParam(usize, ValueID),
+    
     Uconst(u128, ValueID),
     Iconst(i128, ValueID),
     F64const(f64, ValueID),
@@ -81,8 +83,8 @@ pub enum MIR<'ctx> {
     Exp(ValueID, ValueID, ValueID),
     Rem(ValueID, ValueID, ValueID),
     Div(ValueID, ValueID, ValueID),
-    IShl(ValueID, ValueID, ValueID),
-    IShr(ValueID, ValueID, ValueID),
+    Shl(ValueID, ValueID, ValueID),
+    Shr(ValueID, ValueID, ValueID),
 
     Bitand(ValueID, ValueID, ValueID),
     BitOr(ValueID, ValueID, ValueID),
@@ -207,9 +209,16 @@ pub enum MIR<'ctx> {
         args: Box<[ValueID]>,
         return_: ValueID,
     },
-    CallIndirect{
+    CallIndirect {
         func: ValueID,
         args: Box<[ValueID]>,
         return_: ValueID,
-    }
+    },
+
+    /// allocate a sart pointer
+    Malloc(ValueID, ValueID),
+    Free(ValueID),
+    
+    AsyncAwait(ValueID, ValueID),
+    Yield(ValueID, ValueID),
 }

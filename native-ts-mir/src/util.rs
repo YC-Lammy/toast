@@ -1,5 +1,7 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::hash::Hash;
+use std::hash::Hasher;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,7 +39,7 @@ impl BlockID {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ValueID(usize);
+pub struct ValueID(pub(crate) usize);
 
 impl ValueID {
     pub(crate) fn new() -> Self {
@@ -55,5 +57,25 @@ pub struct FunctionID<'ctx> {
     pub(super) _mark: PhantomData<&'ctx ()>,
 }
 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ident(u64);
+
+impl Ident {
+    pub fn from_str(s: &str) -> Self {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+        hasher.write_u8(1);
+        s.hash(&mut hasher);
+
+        return Self(hasher.finish());
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write_u8(0);
+        hasher.write_usize(i);
+
+        Self(hasher.finish())
+    }
+}

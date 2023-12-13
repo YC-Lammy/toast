@@ -1413,6 +1413,9 @@ impl Transformer {
                         optional,
                     } = expr
                     {
+                        if optional{
+                            return Err(Error::syntax_error(c.span, "callee cannot be optional"))
+                        }
                         callee = Some(Callee::Member {
                             object: *object,
                             prop: key,

@@ -1,3 +1,6 @@
+use std::marker::PhantomData;
+
+use crate::Block;
 use crate::mir::MIR;
 use crate::types::*;
 use crate::util::*;
@@ -9,9 +12,13 @@ pub enum Linkage {
     Internal,
 }
 
+pub(crate) struct SSA<'ctx>{
+    pub id: ValueID,
+    pub ty: Type<'ctx>
+}
+
 pub(crate) struct BlockDesc<'ctx> {
     pub(crate) id: BlockID,
-    pub(crate) values: Vec<(ValueID, Type<'ctx>)>,
     pub(crate) inst: Vec<MIR<'ctx>>,
 }
 
@@ -29,22 +36,21 @@ impl<'ctx> BlockDesc<'ctx> {
 
         Self {
             id,
-            values: values,
             inst: Vec::new(),
         }
-    }
-
-    pub fn new_id(&mut self, ty: Type<'ctx>) -> ValueID {
-        let id = ValueID::new();
-        self.values.push((id, ty));
-        return id;
     }
 }
 
 pub struct Function<'ctx> {
+    pub(crate) params: Vec<Type<'ctx>>,
+    pub(crate) return_: Type<'ctx>,
+    pub(crate) is_async: bool,
+    pub(crate) is_generator: bool,
     pub(crate) blocks: Vec<BlockDesc<'ctx>>,
     pub(crate) stackslots: Vec<Type<'ctx>>,
-    _mark: &'ctx (),
+    pub(crate) _mark: PhantomData<&'ctx ()>,
 }
 
-impl<'ctx> Function<'ctx> {}
+impl<'ctx> Function<'ctx> {
+    
+}

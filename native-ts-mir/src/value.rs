@@ -268,6 +268,24 @@ impl<'ctx, 'func> Value<'ctx, 'func, Auto<'ctx>> {
         }
         panic!("value is not future")
     }
+    pub fn into_generator<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>>(&self, yield_ty: Y, resume_ty: RE, return_ty: R) -> Value<'ctx, 'func, Generator<Y, RE, R>> {
+        if let Type::Generator(gen) = &self.ty.inner {
+            if &gen.0 != &yield_ty.to_type() || &gen.1 != &resume_ty.to_type() || &gen.2 != &return_ty.to_type(){
+                panic!("value is generator but type does not match")
+            }
+
+            return Value{
+                id: self.id,
+                ty: Generator { 
+                    yield_: yield_ty, 
+                    resume: resume_ty, 
+                    return_: return_ty 
+                },
+                _mark: PhantomData
+            }
+        }
+        panic!("value is not generator")
+    }
 
     pub fn into_simd<I: ScalarMarkerType, const N: usize>(&self) -> Value<'ctx, 'func, SIMD<I, N>>
     where
