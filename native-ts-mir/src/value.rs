@@ -150,6 +150,32 @@ impl<'ctx, 'func, T: MarkerType<'ctx>> Value<'ctx, 'func, T> {
     }
 }
 
+impl<'ctx, 'func> Value<'ctx, 'func, Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>>{
+    pub fn into_function<A: FunctionArgs<'ctx>, R: MarkerType<'ctx>>(&self, args: A, return_: R) -> Value<'ctx, 'func, Function<'ctx, A, R>>{
+        if self.ty.args.len() != args.len() {
+            panic!("value is function, but wrong number of arguments provided")
+        }
+        for (i, ty) in self.ty.args.0.iter().enumerate() {
+            if ty != &args.get(i) {
+                panic!("value is function, but argument {} has wrong type", i)
+            }
+        }
+        if self.ty.return_.inner != return_.to_type() {
+            panic!("value is function, but return type does not match")
+        }
+
+        return Value {
+            id: self.id,
+            ty: Function {
+                args,
+                return_,
+                _mark: PhantomData,
+            },
+            _mark: PhantomData,
+        };
+    }
+}
+
 impl<'ctx, 'func> Value<'ctx, 'func, Auto<'ctx>> {
     from_auto!(Void);
     from_auto!(U8);

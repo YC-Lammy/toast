@@ -9,4 +9,5 @@ edition = "2021"
 parking_lot = "*"
 paste = "1.0"
 
-inkwell = {version="0.2", features=["llvm16-0"]}
+llvm-sys = "160"
+itoa = "1"

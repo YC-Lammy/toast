@@ -1,16 +1,9 @@
 use std::marker::PhantomData;
 
-use crate::Block;
+use crate::context::GeneratorDesc;
 use crate::mir::MIR;
 use crate::types::*;
 use crate::util::*;
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Linkage {
-    Private,
-    Internal,
-}
 
 pub(crate) struct SSA<'ctx>{
     pub id: ValueID,
@@ -45,7 +38,8 @@ pub struct Function<'ctx> {
     pub(crate) params: Vec<Type<'ctx>>,
     pub(crate) return_: Type<'ctx>,
     pub(crate) is_async: bool,
-    pub(crate) is_generator: bool,
+    pub(crate) is_generator: Option<GeneratorDesc<'ctx>>,
+    pub(crate) map_ssa_func: Vec<(FunctionID<'ctx>, ValueID)>,
     pub(crate) blocks: Vec<BlockDesc<'ctx>>,
     pub(crate) stackslots: Vec<Type<'ctx>>,
     pub(crate) _mark: PhantomData<&'ctx ()>,

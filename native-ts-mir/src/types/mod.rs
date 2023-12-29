@@ -98,6 +98,8 @@ pub enum Type<'ctx> {
     /// a generator, yield, resume, return
     Generator(Box<(Type<'ctx>, Type<'ctx>, Type<'ctx>)>),
 
+    Enum(Box<[Type<'ctx>]>),
+
     SIMDx2(ScalarType),
     SIMDx4(ScalarType),
     SIMDx8(ScalarType),
@@ -689,6 +691,25 @@ impl<const N: usize> FloatMathMarkerType for SIMD<F64, N> where
 impl<const N: usize> FloatMathMarkerType for SIMD<F32, N> where
     simd::LaneCount<N>: simd::SupportedLaneCount
 {
+}
+
+#[derive(Clone)]
+pub struct Enum<'ctx, V: FunctionArgs<'ctx> = AutoArgs<'ctx>>{
+    pub variants: V,
+    pub _mark: PhantomData<&'ctx ()>
+}
+
+impl<'ctx, V: FunctionArgs<'ctx>> seal::Sealed for Enum<'ctx, V>{}
+
+impl<'ctx, V: FunctionArgs<'ctx>> MarkerType<'ctx> for Enum<'ctx, V>{
+    fn to_type(&self) -> Type<'ctx> {
+        let mut v = Vec::new();
+
+        for i in 0..self.variants.len(){
+            v.push(self.variants.get(i))
+        }
+        Type::Enum(v.into_boxed_slice())
+    }
 }
 
 #[derive(Clone)]

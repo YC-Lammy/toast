@@ -215,10 +215,19 @@ pub enum MIR<'ctx> {
         return_: ValueID,
     },
 
-    /// allocate a sart pointer
+    /// allocate a smart pointer
     Malloc(ValueID, ValueID),
+    /// if memory management is manual, free the pointer.
+    /// otherwise, this is noop
     Free(ValueID),
     
+    /// await for a future
     AsyncAwait(ValueID, ValueID),
+    /// yield from a generator and wait for resume
     Yield(ValueID, ValueID),
+
+    /// generator, resume, result
+    /// 
+    /// returns an enum of yield type or return type
+    GeneratorNext(ValueID, ValueID, ValueID),
 }

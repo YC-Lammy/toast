@@ -23,12 +23,6 @@ pub struct InterfaceID<'ctx> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EnumID<'ctx> {
-    pub(super) id: usize,
-    pub(super) _mark: PhantomData<&'ctx ()>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockID(usize);
 
 impl BlockID {
