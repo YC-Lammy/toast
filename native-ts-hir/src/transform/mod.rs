@@ -256,7 +256,10 @@ impl Transformer {
                                             Binding::GenericInterface(_) => todo!("export generic"),
                                             Binding::TypeAlias(id) => ModuleExport::Alias(*id),
                                             Binding::GenericTypeAlias(_) => todo!("export generic"),
-                                            Binding::Using { .. } => todo!("export using"),
+                                            Binding::Using { .. } => {
+                                                // TODO: export using
+                                                return Err(Error::syntax_error(n.span, "export 'using' declare is not allowed"))
+                                            },
                                             Binding::Var { id, ty, .. } => {
                                                 ModuleExport::Var(*id, ty.clone())
                                             }

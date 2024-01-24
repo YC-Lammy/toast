@@ -54,3 +54,26 @@ let r:[number, string, bigint] = [0, "", 330n];
 for (var e of r){
 
 }
+
+for (let i in []){
+    i += (99)
+}
+
+for (let i of [0, 9, 8]){
+    i+=(99);
+}
+
+var var2:number
+var2=0
+var var0:number[]
+var var1:number
+var0=[0 as number,9 as number,8 as number]
+var1=var0.length
+for (;;){
+    if ((var1)===(var2)){
+        break
+    }
+    var var3:number
+    var3=var0[var2++]
+    var3+=99
+}

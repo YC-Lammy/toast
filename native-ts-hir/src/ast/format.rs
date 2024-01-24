@@ -151,6 +151,67 @@ impl<'a> Formatter<'a> {
             Stmt::DeclareGenericInterface(_id) => {}
             Stmt::DeclareInterface(id) => {
                 let iface = self.table.interfaces.get(id).expect("invalid interface");
+
+                self.emit_spaces();
+                self.write_str("interface iface");
+                self.write_int(id.0);
+
+                if iface.extends.len() > 0{
+                    self.write_str(" extends");
+
+                    let mut iter = iface.extends.iter();
+                    self.write_str(" class");
+                    self.write_int(iter.next().unwrap().0);
+
+                    for c in iter{
+                        self.write_str(", class");
+                        self.write_int(c.0);
+                    }
+                }
+
+                if iface.implements.len() > 0{
+                    self.write_str(" implements");
+
+                    let mut iter = iface.implements.iter();
+                    self.write_str(" iface");
+                    self.write_int(iter.next().unwrap().0);
+
+                    for c in iter{
+                        self.write_str(", iface");
+                        self.write_int(c.0);
+                    }
+                }
+
+                self.write_str("{\n");
+                self.new_scope();
+
+                for (propname, prop) in &iface.properties{
+                    self.emit_spaces();
+                    self.format_propname(propname);
+                    if prop.optional{
+                        self.write_str("?")
+                    }
+                    self.write_str(": ");
+                    self.format_ty(&prop.ty);
+                    self.write_str(";\n");
+                }
+
+                for (name, method) in &iface.methods{
+                    self.emit_spaces();
+                    self.format_propname(name);
+                    self.write_str("(");
+
+                    for param in &method.params{
+                        self.format_ty(param);
+                        self.write_str(", ");
+                    }
+                    self.write_str("):");
+                    self.format_ty(&method.return_ty);
+                    self.write_str(";\n")
+                }
+
+                self.close_scope();
+                self.write_str("}\n");
             }
             Stmt::DeclareVar(id, ty) => {
                 self.emit_spaces();

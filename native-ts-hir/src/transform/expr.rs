@@ -420,7 +420,7 @@ impl Transformer {
                     }
                 }
                 PropNameOrExpr::Expr(..) => {
-                    // todo!()
+                    // TODO
                     return Err(Error::syntax_error(
                         b.span,
                         "computed property name 'in' operation not supported",
@@ -625,8 +625,8 @@ impl Transformer {
                         key,
                         optional: _,
                     } => {
-                        // check if object matches this type
-                        // todo!()
+                        // check if object matches func_ty.this type
+                        // TODO
                         (
                             Callee::Member {
                                 object: *object,

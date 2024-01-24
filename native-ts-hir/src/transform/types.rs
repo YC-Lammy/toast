@@ -428,8 +428,9 @@ impl Transformer {
 
                 return Ok(Type::Function(Box::new(func)));
             }
-            swc::TsType::TsImportType(_t) => {
-                todo!("import type")
+            swc::TsType::TsImportType(t) => {
+                // TODO: import types
+                return Err(Error::syntax_error(t.span, "import types not supported"))
             }
             swc::TsType::TsIndexedAccessType(i) => {
                 if i.readonly {
@@ -441,8 +442,9 @@ impl Transformer {
 
                 return Ok(Type::Map(Box::new(index_ty), Box::new(value_ty)));
             }
-            swc::TsType::TsInferType(_i) => {
-                todo!("infer type")
+            swc::TsType::TsInferType(i) => {
+                // TODO: infer types
+                return Err(Error::syntax_error(i.span, "infer types not supported"))
             }
             swc::TsType::TsKeywordType(key) => {
                 let ty = match key.kind {
@@ -1684,7 +1686,7 @@ impl Transformer {
                     },
                 }
             }
-            _ => None,
+            _ => todo!(),
         }
     }
 }

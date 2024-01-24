@@ -28,7 +28,7 @@ fn test_for_in_loop() {
 #[test]
 fn test_for_of_loop() {
     let s = r#"
-    for (let i:number of [0, 9, 8]){
+    for (let i of [0, 9, 8]){
         i+=(99);
     }
     "#;
