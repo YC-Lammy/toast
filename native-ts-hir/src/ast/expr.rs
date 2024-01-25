@@ -194,7 +194,7 @@ pub enum UpdateOp {
     SuffixSub,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Callee {
     Function(FunctionId),
     Member { object: Expr, prop: PropNameOrExpr },
@@ -234,13 +234,13 @@ impl UnaryOp {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum PropNameOrExpr {
     PropName(PropName),
     Expr(Box<Expr>, Type),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Undefined,
     Null,

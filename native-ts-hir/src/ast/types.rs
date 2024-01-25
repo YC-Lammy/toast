@@ -87,18 +87,18 @@ impl Type {
         }
 
         // any object can contain any object
-        if self == Type::AnyObject && other.is_object(){
-            return Type::AnyObject
+        if self == Type::AnyObject && other.is_object() {
+            return Type::AnyObject;
         }
 
         // any object can contain any object
-        if other == Type::AnyObject && self.is_object(){
-            return Type::AnyObject
+        if other == Type::AnyObject && self.is_object() {
+            return Type::AnyObject;
         }
 
         // recuring, append union
-        if other.is_union() && !self.is_union(){
-            return other.union(self)
+        if other.is_union() && !self.is_union() {
+            return other.union(self);
         }
 
         // match each case
@@ -130,7 +130,7 @@ impl Type {
             | Type::Iterator(_) => {
                 // simply return a union
                 Type::Union(Box::new([self, other]))
-            },
+            }
             // self is already a union
             Type::Union(u) => {
                 // union already contains type
@@ -199,21 +199,18 @@ impl Type {
     }
 
     /// returns true if self is union
-    pub fn is_union(&self) -> bool{
-        match self{
+    pub fn is_union(&self) -> bool {
+        match self {
             Self::Union(_) => true,
-            _ => false
+            _ => false,
         }
     }
 
     /// returns true if self is an interface
-    pub fn is_interface(&self) -> bool{
-        match self{
-            Self::Any
-            | Self::AnyObject
-            | Self::Interface(_)
-            | Self::Iterator(_) => true,
-            _ => false
+    pub fn is_interface(&self) -> bool {
+        match self {
+            Self::Any | Self::AnyObject | Self::Interface(_) | Self::Iterator(_) => true,
+            _ => false,
         }
     }
 
@@ -251,7 +248,7 @@ pub struct GenericParam {
 }
 
 /// an object property descriptor
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PropertyDesc {
     /// type of property
     pub ty: Type,
@@ -262,7 +259,7 @@ pub struct PropertyDesc {
 }
 
 /// a class definition
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct ClassType {
     pub name: String,
 
@@ -290,7 +287,7 @@ pub struct ClassType {
 }
 
 /// descriptor of an interface property
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterfacePropertyDesc {
     /// type
     pub ty: Type,
@@ -301,7 +298,7 @@ pub struct InterfacePropertyDesc {
 }
 
 /// descriptor of an interface method
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterfaceMethod {
     /// is method readonly
     pub readonly: bool,
@@ -314,7 +311,7 @@ pub struct InterfaceMethod {
 }
 
 /// an interface definition
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct InterfaceType {
     /// name of the interface, only for debugging purpose
     pub name: String,
@@ -330,48 +327,54 @@ pub struct InterfaceType {
     pub methods: HashMap<PropName, InterfaceMethod>,
 }
 
+/// descriptor of an enum variant
+#[derive(Debug, Clone)]
 pub struct EnumVariantDesc {
+    /// name of the variant
     pub name: PropName,
 }
 
+/// a enum type definition
+#[derive(Debug, Clone)]
 pub struct EnumType {
+    /// name of the enum, for debugging purpose only
     pub name: String,
-
+    /// variants of the enum
     pub variants: Vec<EnumVariantDesc>,
 }
 
-pub enum StructProperty {
-    Method {
-        params: Box<[Type]>,
-        vararg: bool,
-        return_ty: Type,
-    },
-    Property {
-        readonly: bool,
-        ty: Type,
-    },
-}
-
-pub struct StructType {
-    pub properties: HashMap<PropName, StructProperty>,
-}
-
+/// literal types
 #[derive(Debug, Clone, PartialOrd)]
 pub enum LiteralType {
+    /// string literal
     String(Box<str>),
+    /// number literal
     Number(f64),
+    /// integer literal
+    Int(i32),
+    /// symbol literal
     Symbol(Symbol),
+    /// boolean literal
     Bool(bool),
+    /// bigint literal
     Bigint(i128),
 }
 
+// manual implementation of equals
 impl PartialEq for LiteralType {
     fn eq(&self, other: &Self) -> bool {
         match self {
+            // use total compare for f64
             Self::Number(n) => match other {
                 Self::Number(i) => n.total_cmp(i).is_eq(),
                 _ => false,
             },
+            Self::Int(i) => {
+                if let LiteralType::Int(n) = other {
+                    return i == n;
+                }
+                other.eq(&LiteralType::Number(*i as f64))
+            }
             Self::String(s) => match other {
                 Self::String(n) => s == n,
                 _ => false,
@@ -391,8 +394,11 @@ impl PartialEq for LiteralType {
         }
     }
 }
+
+// total eq should work on both order
 impl Eq for LiteralType {}
 
+// manual implementation of order
 impl Ord for LiteralType {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self {

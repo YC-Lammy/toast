@@ -8,25 +8,37 @@ pub mod transform;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// a unique identifier for variables
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VarId(usize);
 
 impl VarId {
+    /// creates a new unique identifier
     pub fn new() -> Self {
         static IDS: AtomicUsize = AtomicUsize::new(0);
         return Self(IDS.fetch_add(1, Ordering::SeqCst));
     }
 }
 
+/// variable kind, not included in `ast` because it is not part of ast.
+///
+/// this is only used during the translation process for syntax checks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VarKind {
+    /// `var` declare, can be redeclared but must be of same type
     Var,
+    /// `let` declare, cannot be redeclared
     Let,
+    /// `const` declare, readonly
     Const,
+    /// `using` declare, readonly and owned by the scope.
+    /// destructor called when it goes out of scope
     Using,
+    /// `await using` declare. Same as `using` but with async destructor
     AwaitUsing,
 }
 
+/// implemented for convenience
 impl From<swc_ecmascript::ast::VarDeclKind> for VarKind {
     fn from(value: swc_ecmascript::ast::VarDeclKind) -> Self {
         match value {
@@ -37,21 +49,22 @@ impl From<swc_ecmascript::ast::VarDeclKind> for VarKind {
     }
 }
 
-/// property name supported
+/// property name for attributes and methods
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PropName {
-    /// obj.prop
+    /// e.g. obj.prop
     Ident(String),
-    /// obj.#prop
+    /// e.g. obj.#prop
     Private(String),
-    /// obj["prop"]
+    /// e.g. obj["prop"]
     String(String),
-    /// obj[0]
+    /// e.g. obj[0]
     Int(i32),
-    /// obj[Symbol.iterator]
+    /// e.g. obj[Symbol.iterator]
     Symbol(Symbol),
 }
 
+/// format propname
 impl core::fmt::Display for PropName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

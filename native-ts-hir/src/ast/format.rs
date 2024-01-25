@@ -156,27 +156,27 @@ impl<'a> Formatter<'a> {
                 self.write_str("interface iface");
                 self.write_int(id.0);
 
-                if iface.extends.len() > 0{
+                if iface.extends.len() > 0 {
                     self.write_str(" extends");
 
                     let mut iter = iface.extends.iter();
                     self.write_str(" class");
                     self.write_int(iter.next().unwrap().0);
 
-                    for c in iter{
+                    for c in iter {
                         self.write_str(", class");
                         self.write_int(c.0);
                     }
                 }
 
-                if iface.implements.len() > 0{
+                if iface.implements.len() > 0 {
                     self.write_str(" implements");
 
                     let mut iter = iface.implements.iter();
                     self.write_str(" iface");
                     self.write_int(iter.next().unwrap().0);
 
-                    for c in iter{
+                    for c in iter {
                         self.write_str(", iface");
                         self.write_int(c.0);
                     }
@@ -185,10 +185,10 @@ impl<'a> Formatter<'a> {
                 self.write_str("{\n");
                 self.new_scope();
 
-                for (propname, prop) in &iface.properties{
+                for (propname, prop) in &iface.properties {
                     self.emit_spaces();
                     self.format_propname(propname);
-                    if prop.optional{
+                    if prop.optional {
                         self.write_str("?")
                     }
                     self.write_str(": ");
@@ -196,12 +196,12 @@ impl<'a> Formatter<'a> {
                     self.write_str(";\n");
                 }
 
-                for (name, method) in &iface.methods{
+                for (name, method) in &iface.methods {
                     self.emit_spaces();
                     self.format_propname(name);
                     self.write_str("(");
 
-                    for param in &method.params{
+                    for param in &method.params {
                         self.format_ty(param);
                         self.write_str(", ");
                     }

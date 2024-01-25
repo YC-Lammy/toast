@@ -16,31 +16,46 @@ type Result<T> = std::result::Result<T, Error<Span>>;
 use super::{context::Binding, Transformer};
 
 impl Transformer {
+    /// translate a function type without translating its contents
     pub fn translate_function_ty(&mut self, func: &swc::Function) -> Result<FuncType> {
+        // generic function
         if func.type_params.is_some() {
             todo!("generic function")
         }
+
+        // the default 'this' type
         let mut this_ty = Type::Any;
+        // the default return type
         let mut return_ty = Type::Undefined;
+        // stores the params
         let mut params = Vec::new();
+        // is variable argument
         let is_var_arg = false;
 
+        // loop through params
         for (i, p) in func.params.iter().enumerate() {
+            // only support ident as param
             if let Some(ident) = p.pat.as_ident() {
+                // translate param type
                 if let Some(ann) = &ident.type_ann {
+                    // translate the type
                     let ty = self.translate_type(&ann.type_ann)?;
 
+                    // if ident is 'this' and is first, this type is set
                     if i == 0 && ident.sym.as_ref() == "this" {
                         this_ty = ty;
                     } else {
+                        // push param type
                         params.push(ty);
                     };
                 } else {
+                    // function param must have type annotation
                     return Err(Error::syntax_error(ident.span, "missing type annotation"));
                 }
             } else if let Some(rest) = p.pat.as_rest() {
-                //is_var_arg = true;
+                // variable agument
 
+                // variable argument can only be declared at the last param
                 if i != func.params.len() - 1 {
                     return Err(Error::syntax_error(
                         rest.dot3_token,
@@ -48,11 +63,13 @@ impl Transformer {
                     ));
                 }
 
+                // TODO: variable argument
                 return Err(Error::syntax_error(
                     rest.dot3_token,
                     "variable arguments not supported",
                 ));
             } else {
+                // we currently only supports ident params
                 return Err(Error::syntax_error(
                     p.span,
                     "destructive params not allowed",
@@ -60,18 +77,22 @@ impl Transformer {
             }
         }
 
+        // translate the return type if any
         if let Some(ann) = &func.return_type {
             return_ty = self.translate_type(&ann.type_ann)?;
         }
 
+        // set function to async if declared
         if func.is_async {
             return_ty = Type::Promise(Box::new(return_ty));
         }
 
+        // set function to generator if declared
         if func.is_generator {
             return_ty = Type::Iterator(Box::new(return_ty));
         }
 
+        // return the function type
         return Ok(FuncType {
             this_ty,
             params,
@@ -80,7 +101,9 @@ impl Transformer {
         });
     }
 
+    /// translate an interface type for an interface declare
     pub fn translate_interface(&mut self, iface: &swc::TsInterfaceDecl) -> Result<InterfaceType> {
+        // interface type body
         let mut iface_ty = InterfaceType {
             name: iface.id.sym.to_string(),
             extends: Vec::new(),
@@ -95,10 +118,11 @@ impl Transformer {
             let type_args = if let Some(type_args) = &ty.type_args {
                 self.translate_type_args(&type_args)?
             } else {
+                // no type arguments
                 Vec::new()
             };
 
-            // translate type
+            // translate extended type
             let t = self.translate_expr_type(&ty.expr, &type_args)?;
 
             match t {
@@ -106,55 +130,69 @@ impl Transformer {
                 Type::Object(class_id) => iface_ty.extends.push(class_id),
                 // an interface
                 Type::Interface(iface_id) => iface_ty.implements.push(iface_id),
+                // other types are not allowed
                 _ => {
                     return Err(Error::syntax_error(
                         ty.span,
-                        "expected class or interface, found type ''",
+                        format!("expected class or interface, found type '{:?}'", t),
                     ))
                 }
             }
         }
 
+        // generic interface
         if let Some(_) = &iface.type_params {
-            unreachable!()
+            panic!("generic interface")
         }
 
+        // translate interface body
         for elem in &iface.body.body {
             match elem {
                 swc::TsTypeElement::TsCallSignatureDecl(c) => {
+                    // TODO: call signature declare
                     return Err(Error::syntax_error(c.span, "call signature not allowed"))
                 }
                 swc::TsTypeElement::TsConstructSignatureDecl(c) => {
+                    // TODO: construct signature declare
                     return Err(Error::syntax_error(
                         c.span,
                         "constructor signature not allowed",
                     ))
                 }
                 swc::TsTypeElement::TsIndexSignature(i) => {
+                    // TODO: index signature
                     return Err(Error::syntax_error(i.span, "index signature not allowed"))
                 }
                 swc::TsTypeElement::TsGetterSignature(g) => {
+                    // TODO: getter
                     return Err(Error::syntax_error(g.span, "getter not supported"))
                 }
                 swc::TsTypeElement::TsSetterSignature(s) => {
+                    // TODO: setter
                     return Err(Error::syntax_error(s.span, "setter not supported"))
                 }
                 swc::TsTypeElement::TsPropertySignature(p) => {
+                    // initialiser not allowed in interface
                     if let Some(init) = &p.init {
                         return Err(Error::syntax_error(init.span(), "initialiser not allowed"));
                     }
+                    // 
                     if let Some(type_params) = &p.type_params {
                         return Err(Error::syntax_error(
                             type_params.span,
                             "generics not allowed",
                         ));
                     }
+                    //
                     if !p.params.is_empty() {
                         return Err(Error::syntax_error(p.span, "params not allowed"));
                     }
+                    // translate property name
                     let key = if p.computed {
+                        // computed property name
                         self.translate_computed_prop_name(&p.key)?
                     } else {
+                        // identifier property name
                         if let Some(id) = p.key.as_ident() {
                             PropNameOrExpr::PropName(PropName::Ident(id.sym.to_string()))
                         } else {
@@ -162,27 +200,34 @@ impl Transformer {
                         }
                     };
 
+                    // match property name
                     let key = match key {
                         PropNameOrExpr::Expr(..) => {
+                            // property must be known at compile time
                             return Err(Error::syntax_error(
                                 p.key.span(),
                                 "property of interface must be literal",
                             ))
                         }
+                        // a property name
                         PropNameOrExpr::PropName(p) => p,
                     };
 
+                    // check if property name is already declared
                     if iface_ty.properties.contains_key(&key) {
                         return Err(Error::syntax_error(p.span, "duplicated attributes"));
                     }
 
+                    // translate type annotation
                     if let Some(ann) = &p.type_ann {
                         let mut ty = self.translate_type(&ann.type_ann)?;
 
+                        // optional type
                         if p.optional {
                             ty = ty.union(Type::Undefined);
                         }
 
+                        // insert property
                         iface_ty.properties.insert(
                             key,
                             InterfacePropertyDesc {
@@ -192,9 +237,11 @@ impl Transformer {
                             },
                         );
                     } else {
+                        // property must be annotated
                         return Err(Error::syntax_error(p.span, "missing type annotation"));
                     }
                 }
+                // an interface method
                 swc::TsTypeElement::TsMethodSignature(m) => {
                     if let Some(type_params) = &m.type_params {
                         return Err(Error::syntax_error(
@@ -430,7 +477,7 @@ impl Transformer {
             }
             swc::TsType::TsImportType(t) => {
                 // TODO: import types
-                return Err(Error::syntax_error(t.span, "import types not supported"))
+                return Err(Error::syntax_error(t.span, "import types not supported"));
             }
             swc::TsType::TsIndexedAccessType(i) => {
                 if i.readonly {
@@ -444,7 +491,7 @@ impl Transformer {
             }
             swc::TsType::TsInferType(i) => {
                 // TODO: infer types
-                return Err(Error::syntax_error(i.span, "infer types not supported"))
+                return Err(Error::syntax_error(i.span, "infer types not supported"));
             }
             swc::TsType::TsKeywordType(key) => {
                 let ty = match key.kind {
@@ -507,12 +554,15 @@ impl Transformer {
                 let ty = self.translate_type(&o.type_ann)?;
 
                 match o.op {
-                    swc::TsTypeOperatorOp::KeyOf => {
-                        match ty{
-                            Type::Map(k, _) => return Ok(*k),
-                            _ => return Err(Error::syntax_error(o.span, "expected index accessing type"))
+                    swc::TsTypeOperatorOp::KeyOf => match ty {
+                        Type::Map(k, _) => return Ok(*k),
+                        _ => {
+                            return Err(Error::syntax_error(
+                                o.span,
+                                "expected index accessing type",
+                            ))
                         }
-                    }
+                    },
                     swc::TsTypeOperatorOp::ReadOnly => return Ok(ty),
                     swc::TsTypeOperatorOp::Unique => return Ok(ty),
                 }
