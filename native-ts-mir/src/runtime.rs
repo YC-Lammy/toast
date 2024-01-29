@@ -44,10 +44,11 @@ impl<'ctx> Default for MemoryManagement<'ctx> {
 pub struct AsyncRuntime<'ctx> {
     /// the type of a future
     pub future_type: AggregateID<'ctx>,
-    /// create a future. The first argument is the pointer that stores thr result.
-    /// should have type fn(*mut u8) -> future_type
+    /// create a future.
+    /// should have type fn() -> future_type
     pub create_future: FunctionID<'ctx>,
-    /// should have type fn(furute_type)
+    /// resolve the future. The first argument is the pointer to the result.
+    /// should have type fn(furute_type, *mut u8)
     pub resolve_future: FunctionID<'ctx>,
     /// awaits a future, returns the result pointer, null if future is not resolved.
     /// should have type fn(future_type) -> *mut u8

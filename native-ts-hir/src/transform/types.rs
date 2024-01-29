@@ -243,6 +243,7 @@ impl Transformer {
                 }
                 // an interface method
                 swc::TsTypeElement::TsMethodSignature(m) => {
+                    // generic method
                     if let Some(type_params) = &m.type_params {
                         return Err(Error::syntax_error(
                             type_params.span,
@@ -250,6 +251,7 @@ impl Transformer {
                         ));
                     }
 
+                    // the method body
                     let mut method_ty = InterfaceMethod {
                         readonly: m.readonly,
                         optional: m.optional,
@@ -257,9 +259,11 @@ impl Transformer {
                         return_ty: Type::Undefined,
                     };
 
+                    // method name
                     let key = if m.computed {
                         self.translate_computed_prop_name(&m.key)?
                     } else {
+                        // ident name
                         if let Some(id) = m.key.as_ident() {
                             PropNameOrExpr::PropName(PropName::Ident(id.sym.to_string()))
                         } else {
@@ -267,8 +271,10 @@ impl Transformer {
                         }
                     };
 
+                    // match key
                     let key = match key {
                         PropNameOrExpr::Expr(..) => {
+                            // dynamic names are not allowed
                             return Err(Error::syntax_error(
                                 m.key.span(),
                                 "property of interface must be literal",
@@ -277,10 +283,12 @@ impl Transformer {
                         PropNameOrExpr::PropName(p) => p,
                     };
 
+                    // check if method already declared
                     if iface_ty.methods.contains_key(&key) {
                         return Err(Error::syntax_error(m.span, "duplicated methods"));
                     }
 
+                    // translate parameters
                     for param in &m.params {
                         match param {
                             swc::TsFnParam::Ident(ident) => {

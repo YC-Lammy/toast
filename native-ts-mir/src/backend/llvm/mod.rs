@@ -10,7 +10,6 @@ pub struct LLVMBackend{
 
 impl super::Backend for LLVMBackend{
     fn compile(&mut self, context: &crate::Context) -> Result<super::ObjectFile, String> {
-        llvm_sys::core::
         let module = llvm_sys::core::LLVMModuleCreateWithNameInContext("", &self.context);
         let mut builder = LLVMBuilder{
             ctx: module.get_context(),
@@ -79,7 +78,7 @@ impl<'ctx> LLVMBuilder<'ctx>{
 
             },
             crate::Type::Array(a) => {
-                self.translate_type(ty).
+                self.translate_type(ty)
             }
         }
     }

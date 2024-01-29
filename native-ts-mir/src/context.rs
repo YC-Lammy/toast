@@ -7,13 +7,15 @@ use crate::{
         FunctionType,
     },
     util::{AggregateID, FunctionID, InterfaceID},
-    Type, backend::{Backend, ObjectFile},
+    Type, backend::Backend,
 };
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Linkage {
+    /// private symbol
     Private,
+    /// internal
     Internal,
     AvailableExternally,
     LinkOnce,
@@ -24,7 +26,9 @@ pub enum Linkage {
     LinkOnceOdr,
     WeakOdr,
     External,
+    /// export to dll
     DLLExport,
+    /// import from dll
     DLLImport
 }
 
@@ -60,32 +64,63 @@ impl Context {
         }
     }
 
-    pub fn declare_aggregate<'ctx>(&'ctx mut self, desc: AggregateDesc<'ctx>) -> AggregateID {
+    /// define an aggregate type
+    pub fn declare_aggregate<'ctx>(&mut self, desc: AggregateDesc<'ctx>) -> AggregateID {
+        // check if aggregate already declared
+        for (i, agg) in self.aggregates.iter().enumerate(){
+            if agg.hash == desc.hash{
+                return AggregateID{
+                    id: i,
+                    _mark: PhantomData
+                }
+            }
+        }
+
+        // get the id
         let id = self.aggregates.len();
+        // push aggregate
         self.aggregates.push(unsafe { core::mem::transmute(desc) });
+        
         return AggregateID {
             id: id,
             _mark: PhantomData,
         };
     }
 
-    pub fn get_aggregate<'ctx>(&'ctx self, id: AggregateID<'ctx>) -> &AggregateDesc<'ctx> {
-        &self.aggregates[id.id]
+    /// get the aggreagate descriptor
+    pub fn get_aggregate<'ctx>(&'ctx self, id: AggregateID<'ctx>) -> &AggregateDesc {
+        self.aggregates.get(id.id).expect("invalid aggregate id")
     }
 
+    /// define an interface type
     pub fn declare_interface<'ctx>(&'ctx mut self, desc: InterfaceDesc<'ctx>) -> InterfaceID {
+        // check if interface already declared
+        for (i, iface) in self.interfaces.iter().enumerate(){
+            if iface.hash == desc.hash{
+                return InterfaceID{
+                    id: i,
+                    _mark: PhantomData
+                }
+            }
+        }
+
+        // get the id
         let id = self.interfaces.len();
+        // push the interface
         self.interfaces.push(unsafe { core::mem::transmute(desc) });
+        // return wrapped id
         return InterfaceID {
             id: id,
             _mark: PhantomData,
         };
     }
 
-    pub fn get_interface<'ctx>(&'ctx self, id: InterfaceID<'ctx>) -> &InterfaceDesc<'ctx> {
-        &self.interfaces[id.id]
+    /// get the interface descriptor
+    pub fn get_interface<'ctx>(&'ctx self, id: InterfaceID<'ctx>) -> &InterfaceDesc {
+        self.interfaces.get(id.id).expect("invalid interface id")
     }
 
+    /// declare a function
     pub fn declare_function<'ctx, S: Into<String>>(
         &'ctx mut self,
         name: Option<S>,
@@ -94,7 +129,7 @@ impl Context {
         is_async: bool,
         is_generator: Option<GeneratorDesc<'ctx>>,
         linkage: Option<Linkage>,
-    ) -> FunctionID<'ctx> {
+    ) -> FunctionID {
         let id = self.functions.len();
 
         self.functions.push(FunctionDesc {
@@ -116,6 +151,7 @@ impl Context {
         };
     }
 
+    /// define a function
     pub fn define_function<'ctx>(&'ctx mut self, id: FunctionID<'ctx>, func: Function<'ctx>) {
         if let Some(desc) = self.functions.get_mut(id.id){
             if desc.is_async != func.is_async{
@@ -145,11 +181,13 @@ impl Context {
         }
     }
 
-    pub fn get_function<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> Option<&'ctx Function<'ctx>> {
-        self.functions[id.id].function.as_ref()
+    /// get the function if defined
+    pub fn get_function<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> Option<&'ctx Function> {
+        self.functions.get(id.id).expect("invalid function id").function.as_ref()
     }
 
-    pub fn get_function_by_name<'ctx>(&'ctx self, name: &str) -> Option<&'ctx Function<'ctx>>{
+    /// get the function if defined
+    pub fn get_function_by_name<'ctx>(&'ctx self, name: &str) -> Option<&'ctx Function>{
         for f in &self.functions{
             if let Some(n) = &f.name{
                 if name == n{
@@ -161,11 +199,11 @@ impl Context {
         return None
     }
 
-    pub fn get_function_type<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> &'ctx FunctionType<'ctx> {
-        &self.functions[id.id].ty
+    pub fn get_function_type<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> &'ctx FunctionType {
+        &self.functions.get(id.id).expect("invalid function id").ty
     }
 
-    pub fn create_function<'ctx>(&'ctx self, params: &[Type<'ctx>], return_ty: Type<'ctx>, is_async: bool, is_generator: Option<GeneratorDesc<'ctx>>) -> Function<'ctx>{
+    pub fn create_function<'ctx>(&'ctx self, params: &[Type<'ctx>], return_ty: Type<'ctx>, is_async: bool, is_generator: Option<GeneratorDesc<'ctx>>) -> Function{
         Function{
             params: params.to_vec(),
             return_: return_ty,
@@ -178,7 +216,7 @@ impl Context {
         }
     }
 
-    pub fn compile<B: Backend>(&self, mut backend: B) -> Result<ObjectFile, String>{
+    pub fn compile<B: Backend>(&self, mut backend: B) -> Result<B::Output, String>{
         backend.compile(self)
     }
 }

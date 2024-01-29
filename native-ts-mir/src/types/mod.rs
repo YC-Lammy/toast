@@ -46,13 +46,13 @@ impl ScalarType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType<'ctx> {
     pub params: Box<[Type<'ctx>]>,
     pub return_: Type<'ctx>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type<'ctx> {
     /// void
     Void,
@@ -156,6 +156,9 @@ impl<'ctx> IntoMarkerType<'ctx> for Type<'ctx> {
 }
 
 pub trait FieldedMarkerType<'ctx>: MarkerType<'ctx> {}
+pub trait PointerMarkerType<'ctx, T: MarkerType<'ctx>>: MarkerType<'ctx>{
+    fn pointee(&self) -> &T;
+}
 
 pub trait IntMarkerType: seal::Sealed + for<'a> MarkerType<'a> + Default {
     type Type: IntoIntMarkerType;
@@ -563,6 +566,11 @@ where
         Type::Pointer(Box::new(self.pointee.to_type()))
     }
 }
+impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Pointer<T>{
+    fn pointee(&self) -> &T {
+        &self.pointee
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Smart<T> {
@@ -577,6 +585,12 @@ where
 {
     fn to_type(&self) -> Type<'ctx> {
         Type::SmartPointer(Box::new(self.pointee.to_type()))
+    }
+}
+
+impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Smart<T>{
+    fn pointee(&self) -> &T {
+        &self.pointee
     }
 }
 

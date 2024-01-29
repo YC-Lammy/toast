@@ -1,7 +1,8 @@
-pub mod llvm;
+//pub mod llvm;
 
 pub trait Backend{
-    fn compile(&mut self, context: &crate::Context) -> Result<ObjectFile, String>;
+    type Output;
+    fn compile(&mut self, context: &crate::Context) -> Result<Self::Output, String>;
 }
 
 pub struct ObjectFile{

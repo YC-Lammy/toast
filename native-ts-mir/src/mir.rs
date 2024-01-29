@@ -61,6 +61,7 @@ pub struct SwitchCase {
 
 #[derive(Debug, Clone)]
 pub enum MIR<'ctx> {
+    /// read param
     ReadParam(usize, ValueID),
     
     Uconst(u128, ValueID),
@@ -86,7 +87,9 @@ pub enum MIR<'ctx> {
     Shl(ValueID, ValueID, ValueID),
     Shr(ValueID, ValueID, ValueID),
 
+    /// bitand
     Bitand(ValueID, ValueID, ValueID),
+    /// bitor
     BitOr(ValueID, ValueID, ValueID),
     Bitxor(ValueID, ValueID, ValueID),
     /// bitnot
@@ -204,6 +207,7 @@ pub enum MIR<'ctx> {
     /// return a value or void
     Return(Option<ValueID>),
 
+    /// function call
     Call {
         id: FunctionID<'ctx>,
         args: Box<[ValueID]>,

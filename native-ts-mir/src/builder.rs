@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::marker::PhantomData;
 
-use types::{Auto, FunctionType, Future, Smart, ValueIndex, AutoArgs, Generator, Enum};
+use types::{Auto, AutoArgs, Enum, FunctionType, Future, Generator, PointerMarkerType, Smart, ValueIndex};
 
 use crate::function::{BlockDesc, Function};
 use crate::mir::{FCond, ICond, Ordering, MIR};
@@ -139,7 +139,8 @@ where
         ValueID::new()
     }
 
-    pub fn read_param(&self, index: usize) -> Option<Value<'ctx, 'func, Auto<'ctx>>>{
+    /// read from param
+    pub fn param(&self, index: usize) -> Option<Value<'ctx, 'func, Auto<'ctx>>>{
         if let Some(ty) = self.builder.func.borrow().params.get(index){
             let ty = ty.clone();
             let id = self.new_ssa(ty.clone());
@@ -1146,28 +1147,30 @@ where
         };
     }
 
-    pub fn load<T: MarkerType<'ctx>>(
+    pub fn load<T: MarkerType<'ctx>, P: PointerMarkerType<'ctx, T>>(
         &self,
-        ptr: Value<'ctx, 'func, Pointer<T>>,
+        ptr: Value<'ctx, 'func, P>,
     ) -> Value<'ctx, 'func, T> {
-        let id = self.new_ssa(ptr.ty.pointee.to_type());
+        let id = self.new_ssa(ptr.ty.pointee().to_type());
         self.block.borrow_mut().inst.push(MIR::Load(ptr.id, id));
 
         return Value {
             id,
-            ty: ptr.ty.pointee,
+            ty: ptr.ty.pointee().clone(),
             _mark: PhantomData,
         };
     }
 
-    pub fn store<T: MarkerType<'ctx>>(
+    /// stores a value
+    pub fn store<T: MarkerType<'ctx>, P: PointerMarkerType<'ctx, T>>(
         &self,
-        ptr: Value<'ctx, 'func, Pointer<T>>,
+        ptr: Value<'ctx, 'func, P>,
         value: Value<'ctx, 'func, T>,
     ) {
         self.block.borrow_mut().inst.push(MIR::Store(ptr.id, value.id));
     }
 
+    /// memory fence operation
     pub fn fence(&self, ordering: Ordering) {
         self.block.borrow_mut().inst.push(MIR::AtomicFence(ordering));
     }
@@ -1363,6 +1366,10 @@ where
         };
     }
 
+    /// yields from a generator
+    /// 
+    /// all the previous SSA values would be invalidated after this point.
+    /// Any value wanting to live across generator boundaries must be stored in stackslot
     pub fn yield_<T: MarkerType<'ctx>>(&self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, Auto<'ctx>>{
         if let Some(desc) = &self.builder.func.borrow().is_generator{
             let resume_ty = desc.resume_type.clone();
@@ -1381,6 +1388,7 @@ where
         }
     }
 
+    /// resume a generator
     pub fn generator_resume<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>, >(&self, generator: Value<'ctx, 'func, Generator<Y, RE, R>>, resume: Value<'ctx, 'func, RE>) -> Value<'ctx, 'func, Enum<'ctx, (Y, R)>>{
         let ty = Type::Enum(Box::new([generator.ty.yield_.to_type(), generator.ty.return_.to_type()]));
         let id = self.new_ssa(ty);

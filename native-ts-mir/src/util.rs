@@ -56,6 +56,7 @@ pub struct FunctionID<'ctx> {
 pub struct Ident(u64);
 
 impl Ident {
+    /// from string
     pub fn from_str(s: &str) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
@@ -65,6 +66,7 @@ impl Ident {
         return Self(hasher.finish());
     }
 
+    /// from index
     pub fn from_index(i: usize) -> Self {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         hasher.write_u8(0);
