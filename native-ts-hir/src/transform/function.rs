@@ -1,6 +1,6 @@
 use native_js_common::error::Error;
-use swc_common::{Span, Spanned};
-use swc_ecmascript::ast as swc;
+use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::{
     ast::{Expr, FuncType, FunctionParam, Stmt, Type},
@@ -151,9 +151,7 @@ impl Transformer {
                 } else {
                     return Err(Error::syntax_error(ident.span, "missing type annotation"));
                 }
-            }
-
-            if let Some(r) = p.pat.as_rest() {
+            } else if let Some(r) = p.pat.as_rest() {
                 return Err(Error::syntax_error(
                     r.dot3_token,
                     "variable arguments not supported",

@@ -12,7 +12,3 @@ native-ts-parser = {path = "../native-ts-parser"}
 itoa = "1"
 num-traits = "*"
 itertools = "*"
-
-swc_ecmascript = {version="0.231", features=["parser", "dep_graph", "transforms", "optimization", "visit", "codegen", "typescript"]}
-swc_common = "*"
-swc_atoms = "*"

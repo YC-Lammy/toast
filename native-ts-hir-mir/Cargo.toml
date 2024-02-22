@@ -6,3 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+native-ts-hir = {version="*", path="../native-ts-hir"}
+native-ts-mir = {version="*", path="../native-ts-mir"}

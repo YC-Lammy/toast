@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use swc_common::{BytePos, Spanned};
+use swc_core::common::{BytePos, Spanned};
+
+pub use swc_core;
 
 pub mod config;
 
@@ -15,7 +17,7 @@ pub struct ParsedModule {
     pub path: PathBuf,
     pub id: ModuleId,
     pub dependencies: Vec<ModuleId>,
-    pub module: swc_ecmascript::ast::Module,
+    pub module: swc_core::ecma::ast::Module,
 }
 
 #[derive(Debug)]
@@ -25,14 +27,14 @@ pub struct ParsedProgram {
 
 #[derive(Default)]
 pub struct Parser {
-    src: swc_common::SourceMap,
+    src: swc_core::common::SourceMap,
     modules: HashMap<ModuleId, ParsedModule>,
 }
 
 impl Parser {
     pub fn new() -> Self {
         Self {
-            src: swc_common::SourceMap::new(Default::default()),
+            src: swc_core::common::SourceMap::new(Default::default()),
             modules: HashMap::new(),
         }
     }
@@ -81,7 +83,7 @@ impl Parser {
     pub fn parse_str(mut self, name: String, src: String) -> Result<ParsedProgram, String> {
         let file = self
             .src
-            .new_source_file(swc_common::FileName::Custom(name), src);
+            .new_source_file(swc_core::common::FileName::Custom(name), src);
 
         self.parse_file(PathBuf::new(), &file.src, file.start_pos, file.end_pos)?;
 
@@ -129,10 +131,10 @@ impl Parser {
         start: BytePos,
         end: BytePos,
     ) -> Result<ModuleId, String> {
-        let input = swc_common::input::StringInput::new(&input, start, end);
+        let input = swc_core::common::input::StringInput::new(&input, start, end);
 
-        let mut parser = swc_ecmascript::parser::Parser::new(
-            swc_ecmascript::parser::Syntax::Typescript(swc_ecmascript::parser::TsConfig::default()),
+        let mut parser = swc_core::ecma::parser::Parser::new(
+            swc_core::ecma::parser::Syntax::Typescript(swc_core::ecma::parser::TsConfig::default()),
             input,
             None,
         );
@@ -156,9 +158,9 @@ impl Parser {
         let mut dependencies = Vec::new();
 
         for item in &mut module.body {
-            if let swc_ecmascript::ast::ModuleItem::ModuleDecl(m) = item {
+            if let swc_core::ecma::ast::ModuleItem::ModuleDecl(m) = item {
                 match m {
-                    swc_ecmascript::ast::ModuleDecl::Import(i) => {
+                    swc_core::ecma::ast::ModuleDecl::Import(i) => {
                         let p = self.resolve_dependency(&path, &i.src.value)?;
                         i.src.raw = None;
                         i.src.value = p.to_string_lossy().into();
@@ -166,7 +168,7 @@ impl Parser {
                         let id = self.parse_module(p)?;
                         dependencies.push(id);
                     }
-                    swc_ecmascript::ast::ModuleDecl::ExportAll(e) => {
+                    swc_core::ecma::ast::ModuleDecl::ExportAll(e) => {
                         let p = self.resolve_dependency(&path, &e.src.value)?;
                         e.src.raw = None;
                         e.src.value = p.to_string_lossy().into();
@@ -174,7 +176,7 @@ impl Parser {
                         let id = self.parse_module(p)?;
                         dependencies.push(id);
                     }
-                    swc_ecmascript::ast::ModuleDecl::ExportNamed(n) => {
+                    swc_core::ecma::ast::ModuleDecl::ExportNamed(n) => {
                         if let Some(src) = &mut n.src {
                             let p = self.resolve_dependency(&path, &src.value)?;
                             src.raw = None;

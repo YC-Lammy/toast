@@ -14,8 +14,8 @@ use std::{
 use context::*;
 
 use native_js_common::error::Error;
-use swc_common::Span;
-use swc_ecmascript::ast as swc;
+use native_ts_parser::swc_core::common::Span;
+use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::{
     ast::{self, Expr, Function, FunctionParam, ModuleExport, Stmt, Type},
@@ -72,7 +72,7 @@ impl Transformer {
         return "anonymous".to_string() + buf.format(COUNT.fetch_add(1, Ordering::SeqCst));
     }
 
-    pub fn transform_module(&mut self, module: swc::Module) -> Result<crate::ast::Module> {
+    pub fn transform_module(&mut self, module: &swc::Module) -> Result<crate::ast::Module> {
         let mut export_default = ModuleExport::Undefined;
         let mut module_exports = HashMap::new();
 

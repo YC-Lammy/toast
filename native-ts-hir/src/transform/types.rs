@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use native_js_common::error::Error;
-use swc_common::{Span, Spanned};
-use swc_ecmascript::ast as swc;
+use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::ast::{
     EnumType, EnumVariantDesc, FuncType, InterfaceMethod, InterfacePropertyDesc, InterfaceType,
@@ -150,33 +150,33 @@ impl Transformer {
             match elem {
                 swc::TsTypeElement::TsCallSignatureDecl(c) => {
                     // TODO: call signature declare
-                    return Err(Error::syntax_error(c.span, "call signature not allowed"))
+                    return Err(Error::syntax_error(c.span, "call signature not allowed"));
                 }
                 swc::TsTypeElement::TsConstructSignatureDecl(c) => {
                     // TODO: construct signature declare
                     return Err(Error::syntax_error(
                         c.span,
                         "constructor signature not allowed",
-                    ))
+                    ));
                 }
                 swc::TsTypeElement::TsIndexSignature(i) => {
                     // TODO: index signature
-                    return Err(Error::syntax_error(i.span, "index signature not allowed"))
+                    return Err(Error::syntax_error(i.span, "index signature not allowed"));
                 }
                 swc::TsTypeElement::TsGetterSignature(g) => {
                     // TODO: getter
-                    return Err(Error::syntax_error(g.span, "getter not supported"))
+                    return Err(Error::syntax_error(g.span, "getter not supported"));
                 }
                 swc::TsTypeElement::TsSetterSignature(s) => {
                     // TODO: setter
-                    return Err(Error::syntax_error(s.span, "setter not supported"))
+                    return Err(Error::syntax_error(s.span, "setter not supported"));
                 }
                 swc::TsTypeElement::TsPropertySignature(p) => {
                     // initialiser not allowed in interface
                     if let Some(init) = &p.init {
                         return Err(Error::syntax_error(init.span(), "initialiser not allowed"));
                     }
-                    // 
+                    //
                     if let Some(type_params) = &p.type_params {
                         return Err(Error::syntax_error(
                             type_params.span,
@@ -207,7 +207,7 @@ impl Transformer {
                             return Err(Error::syntax_error(
                                 p.key.span(),
                                 "property of interface must be literal",
-                            ))
+                            ));
                         }
                         // a property name
                         PropNameOrExpr::PropName(p) => p,
@@ -278,7 +278,7 @@ impl Transformer {
                             return Err(Error::syntax_error(
                                 m.key.span(),
                                 "property of interface must be literal",
-                            ))
+                            ));
                         }
                         PropNameOrExpr::PropName(p) => p,
                     };
@@ -1294,7 +1294,15 @@ impl Transformer {
                 return None;
             }
             Type::Tuple(elems) => match prop {
-                PropName::Int(_) => Some(Type::Union(elems.clone())),
+                PropName::Int(index) => {
+                    if *index >= elems.len() as i32{
+                        return None
+                    }
+                    if *index < 0{
+                        return None
+                    }
+                    return Some(elems[*index as usize].clone())
+                },
                 PropName::Ident(ident) => match ident.as_str() {
                     "length" => Some(Type::Int),
                     _ => None,

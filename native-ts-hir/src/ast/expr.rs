@@ -1,4 +1,4 @@
-use swc_common::Span;
+use native_ts_parser::swc_core::common::Span;
 
 use crate::common::{ClassId, FunctionId, VariableId};
 use crate::{PropName, Symbol};
@@ -68,25 +68,25 @@ impl AssignOp {
     }
 }
 
-impl From<swc_ecmascript::ast::AssignOp> for AssignOp {
-    fn from(value: swc_ecmascript::ast::AssignOp) -> Self {
+impl From<native_ts_parser::swc_core::ecma::ast::AssignOp> for AssignOp {
+    fn from(value: native_ts_parser::swc_core::ecma::ast::AssignOp) -> Self {
         match value {
-            swc_ecmascript::ast::AssignOp::AddAssign => Self::AddAssign,
-            swc_ecmascript::ast::AssignOp::AndAssign => Self::AndAssign,
-            swc_ecmascript::ast::AssignOp::BitAndAssign => Self::BitAndAssign,
-            swc_ecmascript::ast::AssignOp::BitOrAssign => Self::BitOrAssign,
-            swc_ecmascript::ast::AssignOp::BitXorAssign => Self::BitXorAssign,
-            swc_ecmascript::ast::AssignOp::DivAssign => Self::DivAssign,
-            swc_ecmascript::ast::AssignOp::ExpAssign => Self::ExpAssign,
-            swc_ecmascript::ast::AssignOp::LShiftAssign => Self::LShiftAssign,
-            swc_ecmascript::ast::AssignOp::ModAssign => Self::ModAssign,
-            swc_ecmascript::ast::AssignOp::MulAssign => Self::MulAssign,
-            swc_ecmascript::ast::AssignOp::NullishAssign => Self::NullishAssign,
-            swc_ecmascript::ast::AssignOp::RShiftAssign => Self::RShiftAssign,
-            swc_ecmascript::ast::AssignOp::SubAssign => Self::SubAssign,
-            swc_ecmascript::ast::AssignOp::ZeroFillRShiftAssign => Self::ZeroFillRShiftAssign,
-            swc_ecmascript::ast::AssignOp::Assign => Self::Assign,
-            swc_ecmascript::ast::AssignOp::OrAssign => Self::OrAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::AddAssign => Self::AddAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::AndAssign => Self::AndAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::BitAndAssign => Self::BitAndAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::BitOrAssign => Self::BitOrAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::BitXorAssign => Self::BitXorAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::DivAssign => Self::DivAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::ExpAssign => Self::ExpAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::LShiftAssign => Self::LShiftAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::ModAssign => Self::ModAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::MulAssign => Self::MulAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::NullishAssign => Self::NullishAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::RShiftAssign => Self::RShiftAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::SubAssign => Self::SubAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::ZeroFillRShiftAssign => Self::ZeroFillRShiftAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::Assign => Self::Assign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::OrAssign => Self::OrAssign,
         }
     }
 }
@@ -150,34 +150,34 @@ impl BinOp {
     }
 }
 
-impl From<swc_ecmascript::ast::BinaryOp> for BinOp {
-    fn from(value: swc_ecmascript::ast::BinaryOp) -> Self {
+impl From<native_ts_parser::swc_core::ecma::ast::BinaryOp> for BinOp {
+    fn from(value: native_ts_parser::swc_core::ecma::ast::BinaryOp) -> Self {
         match value {
-            swc_ecmascript::ast::BinaryOp::Add => Self::Add,
-            swc_ecmascript::ast::BinaryOp::BitAnd => Self::BitAnd,
-            swc_ecmascript::ast::BinaryOp::BitOr => Self::BitOr,
-            swc_ecmascript::ast::BinaryOp::BitXor => Self::BitXor,
-            swc_ecmascript::ast::BinaryOp::Div => Self::Div,
-            swc_ecmascript::ast::BinaryOp::EqEq => Self::EqEq,
-            swc_ecmascript::ast::BinaryOp::EqEqEq => Self::EqEqEq,
-            swc_ecmascript::ast::BinaryOp::Exp => Self::Exp,
-            swc_ecmascript::ast::BinaryOp::Gt => Self::Gt,
-            swc_ecmascript::ast::BinaryOp::GtEq => Self::Gteq,
-            swc_ecmascript::ast::BinaryOp::In => Self::In,
-            swc_ecmascript::ast::BinaryOp::InstanceOf => unreachable!(),
-            swc_ecmascript::ast::BinaryOp::LShift => Self::LShift,
-            swc_ecmascript::ast::BinaryOp::LogicalAnd => Self::And,
-            swc_ecmascript::ast::BinaryOp::LogicalOr => Self::Or,
-            swc_ecmascript::ast::BinaryOp::Lt => Self::Lt,
-            swc_ecmascript::ast::BinaryOp::LtEq => Self::Lteq,
-            swc_ecmascript::ast::BinaryOp::Mod => Self::Mod,
-            swc_ecmascript::ast::BinaryOp::Mul => Self::Mul,
-            swc_ecmascript::ast::BinaryOp::NotEq => Self::NotEq,
-            swc_ecmascript::ast::BinaryOp::NotEqEq => Self::NotEqEq,
-            swc_ecmascript::ast::BinaryOp::NullishCoalescing => Self::Nullish,
-            swc_ecmascript::ast::BinaryOp::RShift => Self::RShift,
-            swc_ecmascript::ast::BinaryOp::Sub => Self::Sub,
-            swc_ecmascript::ast::BinaryOp::ZeroFillRShift => Self::URShift,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Add => Self::Add,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::BitAnd => Self::BitAnd,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::BitOr => Self::BitOr,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::BitXor => Self::BitXor,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Div => Self::Div,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::EqEq => Self::EqEq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::EqEqEq => Self::EqEqEq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Exp => Self::Exp,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Gt => Self::Gt,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::GtEq => Self::Gteq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::In => Self::In,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::InstanceOf => unreachable!(),
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::LShift => Self::LShift,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::LogicalAnd => Self::And,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::LogicalOr => Self::Or,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Lt => Self::Lt,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::LtEq => Self::Lteq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Mod => Self::Mod,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Mul => Self::Mul,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::NotEq => Self::NotEq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::NotEqEq => Self::NotEqEq,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::NullishCoalescing => Self::Nullish,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::RShift => Self::RShift,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::Sub => Self::Sub,
+            native_ts_parser::swc_core::ecma::ast::BinaryOp::ZeroFillRShift => Self::URShift,
         }
     }
 }

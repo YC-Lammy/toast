@@ -1,4 +1,4 @@
-use swc_ecmascript::ast as swc;
+use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::PropName;
 use crate::{ast::ModuleExport, common::ModuleId};

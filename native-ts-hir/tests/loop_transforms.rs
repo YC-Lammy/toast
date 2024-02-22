@@ -16,7 +16,7 @@ fn test_for_in_loop() {
     for (_id, module) in m.modules {
         let mut t = Transformer::new();
 
-        let re = t.transform_module(module.module).expect("parse error");
+        let re = t.transform_module(&module.module).expect("parse error");
         let mut formatter = Formatter::new(&re.table);
         formatter.format_module(&re);
 
@@ -40,7 +40,7 @@ fn test_for_of_loop() {
     for (_id, module) in m.modules {
         let mut t = Transformer::new();
 
-        let re = t.transform_module(module.module).expect("parse error");
+        let re = t.transform_module(&module.module).expect("parse error");
         let mut formatter = Formatter::new(&re.table);
         formatter.format_module(&re);
 

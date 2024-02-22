@@ -214,6 +214,10 @@ impl Type {
         }
     }
 
+    pub fn is_array(&self) -> bool {
+        todo!()
+    }
+
     /// TODO: flattening types
     pub fn flattened(&self) -> Type {
         match self {

@@ -1,14 +1,27 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use native_ts_mir::types::Interface;
+use native_ts_mir::types::{
+    Type
+};
+
+use native_ts_hir::ast::Module;
+
+
+pub struct Translator{
+    context: native_ts_mir::Context,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Translator{
+    pub fn new() -> Self{
+        let ctx = native_ts_mir::Context::new();
+        Self { context: ctx }
     }
+
+    pub fn translate(&self, module: &Module){
+        
+    }
+}
+
+pub struct TranslatorBuilder<'ctx>{
+    ctx: &'ctx native_ts_mir::Context,
+    any_type: Interface<'ctx>,
 }

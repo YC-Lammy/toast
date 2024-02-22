@@ -39,12 +39,12 @@ pub enum VarKind {
 }
 
 /// implemented for convenience
-impl From<swc_ecmascript::ast::VarDeclKind> for VarKind {
-    fn from(value: swc_ecmascript::ast::VarDeclKind) -> Self {
+impl From<native_ts_parser::swc_core::ecma::ast::VarDeclKind> for VarKind {
+    fn from(value: native_ts_parser::swc_core::ecma::ast::VarDeclKind) -> Self {
         match value {
-            swc_ecmascript::ast::VarDeclKind::Const => Self::Const,
-            swc_ecmascript::ast::VarDeclKind::Let => Self::Let,
-            swc_ecmascript::ast::VarDeclKind::Var => Self::Var,
+            native_ts_parser::swc_core::ecma::ast::VarDeclKind::Const => Self::Const,
+            native_ts_parser::swc_core::ecma::ast::VarDeclKind::Let => Self::Let,
+            native_ts_parser::swc_core::ecma::ast::VarDeclKind::Var => Self::Var,
         }
     }
 }

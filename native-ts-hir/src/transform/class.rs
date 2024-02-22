@@ -1,7 +1,7 @@
 use native_js_common::error::Error;
 
-use swc_common::{Span, Spanned};
-use swc_ecmascript::ast as swc;
+use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::ecma::ast as swc;
 
 use super::Transformer;
 
