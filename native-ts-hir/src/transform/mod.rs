@@ -326,9 +326,7 @@ impl Transformer {
                 swc::Decl::Class(class) => {
                     self.hoist_class(Some(&class.ident.sym), &class.class)?;
                 }
-                swc::Decl::Fn(func) => {
-                    self.hoist_function(Some(&func.ident.sym), &func.function)?;
-                }
+                swc::Decl::Fn(func) => {}
                 swc::Decl::TsEnum(e) => {
                     self.hoist_enum(&e)?;
                 }
@@ -423,19 +421,10 @@ impl Transformer {
             }
         }
 
-        // translate functions
-        for decl in stmts {
-            if let swc::Decl::Fn(func) = decl {
-                match self.context.find(&func.ident.sym) {
-                    Some(Binding::Function(id)) => {
-                        let id = *id;
-                        self.translate_function(id, None, &func.function)?;
-                    }
-                    Some(Binding::GenericFunction(_id)) => {
-                        todo!("generic function")
-                    }
-                    _ => unreachable!(),
-                }
+        // hoist functions
+        for decl in stmts{
+            if let swc::Decl::Fn(f) = decl{
+                self.hoist_function(Some(&f.ident.sym), &f.function)?;
             }
         }
 

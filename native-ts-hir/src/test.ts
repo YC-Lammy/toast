@@ -63,17 +63,26 @@ for (let i of [0, 9, 8]){
     i+=(99);
 }
 
-var var2:number
-var2=0
-var var0:number[]
-var var1:number
-var0=[0 as number,9 as number,8 as number]
-var1=var0.length
-for (;;){
-    if ((var1)===(var2)){
-        break
-    }
+fun1([],0)
+function fun1(this:any, var0:number[], var1:number):number{
+    var var2:number
+    var2=0 as number
     var var3:number
-    var3=var0[var2++]
-    var3+=99
+    var3=(var0.length)-(1) as number
+    var var4:number
+    for (;;){
+        if ((var3)>=(var2)){
+            break
+        }
+        var4=(var2)+(((var3)-(var2))/(2 as number))
+        if ((var0[var4])==(var1)){
+            return var4
+        }
+        if ((var0[var4])>(var1)){
+            var3=(var4)-(1 as number)
+        }
+        else {
+            var2=(var4)+(1 as number)
+        }
+    }    return -(1)
 }

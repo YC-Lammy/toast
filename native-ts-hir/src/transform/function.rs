@@ -117,53 +117,21 @@ impl Transformer {
             todo!("generic function")
         }
 
-        // clear the params in case of hoisting
-        self.context.func().params.clear();
-
         for (i, p) in func.params.iter().enumerate() {
             if let Some(ident) = p.pat.as_ident() {
-                if let Some(ann) = &ident.type_ann {
-                    let ty = self.translate_type(&ann.type_ann)?;
-                    let id = VariableId::new();
-
-                    if i == 0 && ident.sym.as_ref() == "this" {
-                        if class_this_ty.is_some() {
-                            return Err(Error::syntax_error(
-                                ident.span,
-                                "'this' param is not allowed",
-                            ));
-                        }
-                        this_ty = ty;
-                        continue;
-                    }
-                    // declare binding
-                    self.context.declare(
-                        &ident.sym,
-                        Binding::Var {
-                            writable: true,
-                            redeclarable: true,
-                            id: id,
-                            ty: ty.clone(),
-                        },
-                    );
-                    // add param
-                    self.context
-                        .func()
-                        .params
-                        .push(FunctionParam { id: id, ty: ty });
-                } else {
-                    return Err(Error::syntax_error(ident.span, "missing type annotation"));
-                }
-            } else if let Some(r) = p.pat.as_rest() {
-                return Err(Error::syntax_error(
-                    r.dot3_token,
-                    "variable arguments not supported",
-                ));
-            } else {
-                return Err(Error::syntax_error(
-                    p.span,
-                    "destructive param not supported",
-                ));
+                let id = self.context.func().params[i].id;
+                let ty = self.context.func().params[i].ty.clone();
+                
+                // declare binding
+                self.context.declare(
+                    &ident.sym,
+                    Binding::Var {
+                        writable: true,
+                        redeclarable: true,
+                        id: id,
+                        ty: ty,
+                    },
+                );
             }
         }
 
