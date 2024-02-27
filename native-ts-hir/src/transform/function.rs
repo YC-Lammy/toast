@@ -3,8 +3,8 @@ use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::{
-    ast::{Expr, FuncType, FunctionParam, Stmt, Type},
-    common::{FunctionId, VariableId},
+    ast::{Expr, FuncType, Stmt, Type},
+    common::FunctionId,
     transform::context::Binding,
 };
 
@@ -121,7 +121,7 @@ impl Transformer {
             if let Some(ident) = p.pat.as_ident() {
                 let id = self.context.func().params[i].id;
                 let ty = self.context.func().params[i].ty.clone();
-                
+
                 // declare binding
                 self.context.declare(
                     &ident.sym,

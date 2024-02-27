@@ -326,7 +326,6 @@ impl Transformer {
                 swc::Decl::Class(class) => {
                     self.hoist_class(Some(&class.ident.sym), &class.class)?;
                 }
-                swc::Decl::Fn(func) => {}
                 swc::Decl::TsEnum(e) => {
                     self.hoist_enum(&e)?;
                 }
@@ -340,6 +339,8 @@ impl Transformer {
                     // translate later
                     self.hoist_alias(&alias.id.sym, alias)?;
                 }
+                // hoist later
+                swc::Decl::Fn(_) => {}
                 swc::Decl::Var(_) => {}
                 // do not hoist using
                 swc::Decl::Using(_) => {}
@@ -520,6 +521,7 @@ impl Transformer {
             return Err(Error::syntax_error(e.id.span, "duplicated identifier"));
         }
 
+        // translate enum already
         let ty = self.translate_enum(e)?;
 
         let slot = self.context.enums.insert(id, ty);
