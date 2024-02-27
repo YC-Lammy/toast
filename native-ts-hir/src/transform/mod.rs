@@ -83,7 +83,8 @@ impl Transformer {
                         self.hoist_class(c.ident.as_ref().map(|id| id.sym.as_ref()), &c.class)
                     }
                     swc::DefaultDecl::Fn(f) => {
-                        self.hoist_function(f.ident.as_ref().map(|id| id.sym.as_ref()), &f.function)
+                        self.hoist_function(f.ident.as_ref().map(|id| id.sym.as_ref()), &f.function)?;
+                        Ok(())
                     }
                     swc::DefaultDecl::TsInterfaceDecl(i) => {
                         self.hoist_interface(Some(&i.id.sym), &i)
@@ -158,11 +159,11 @@ impl Transformer {
                             .func()
                             .stmts
                             .push(Stmt::DeclareVar(varid, ty.clone()));
-                        self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                             op: crate::ast::AssignOp::Assign,
                             variable: varid,
                             value: Box::new(expr),
-                        }));
+                        })));
 
                         export_default = ModuleExport::Var(varid, ty);
                     }
@@ -449,22 +450,28 @@ impl Transformer {
         return Ok(());
     }
 
-    pub fn hoist_function(&mut self, name: Option<&str>, func: &swc::Function) -> Result<()> {
+    pub fn hoist_function(&mut self, name: Option<&str>, func: &swc::Function) -> Result<FunctionId> {
         let id = FunctionId::new();
         if func.type_params.is_some() {
-            if !self
-                .context
-                .declare(name.unwrap_or(""), Binding::GenericFunction(id))
-            {
-                return Err(Error::syntax_error(func.span, "duplicated identifier"));
+            if let Some(name) = name{
+                if !self
+                    .context
+                    .declare(name, Binding::GenericFunction(id))
+                {
+                    return Err(Error::syntax_error(func.span, "duplicated identifier"));
+                }
             }
+            
         } else {
-            if !self
-                .context
-                .declare(name.unwrap_or(""), Binding::Function(id))
-            {
-                return Err(Error::syntax_error(func.span, "duplicated identifier"));
+            if let Some(name) = name{
+                if !self
+                    .context
+                    .declare(name, Binding::Function(id))
+                {
+                    return Err(Error::syntax_error(func.span, "duplicated identifier"));
+                }
             }
+            
 
             let f = self.translate_function_ty(func)?;
 
@@ -488,7 +495,7 @@ impl Transformer {
                 },
             );
         }
-        return Ok(());
+        return Ok(id);
     }
 
     pub fn hoist_interface(

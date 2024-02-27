@@ -57,7 +57,7 @@ impl Transformer {
             swc::Stmt::Expr(e) => {
                 // translate the expression
                 let (expr, _ty) = self.translate_expr(&e.expr, None)?;
-                self.context.func().stmts.push(Stmt::Expr(expr));
+                self.context.func().stmts.push(Stmt::Expr(Box::new(expr)));
             }
             swc::Stmt::For(f) => self.translate_for_stmt(f, label)?,
             swc::Stmt::ForIn(f) => self.translate_for_in_stmt(f, label)?,
@@ -75,14 +75,14 @@ impl Transformer {
                 };
 
                 // return
-                self.context.func().stmts.push(Stmt::Return(arg));
+                self.context.func().stmts.push(Stmt::Return(Box::new(arg)));
             }
             swc::Stmt::Switch(s) => self.translate_switch_stmt(s)?,
             swc::Stmt::Throw(t) => {
                 // does not have to be type checked
                 let (expr, _ty) = self.translate_expr(&t.arg, None)?;
                 // push throw stmt
-                self.context.func().stmts.push(Stmt::Throw(expr));
+                self.context.func().stmts.push(Stmt::Throw(Box::new(expr)));
             }
             swc::Stmt::Try(t) => self.translate_try_catch_stmt(t)?,
             swc::Stmt::While(w) => self.translate_while_stmt(w, label)?,
@@ -301,11 +301,11 @@ impl Transformer {
             .push(Stmt::DeclareVar(varid, ty.unwrap()));
 
         if let Some(init) = init_expr {
-            self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                 op: crate::ast::AssignOp::Assign,
                 variable: varid,
                 value: Box::new(init),
-            }));
+            })));
         }
 
         return Ok(varid);
@@ -408,7 +408,7 @@ impl Transformer {
         // push the initialiser to stack and get its type
         let init_ty = if let Some((e, t)) = init{
             // push the initialiser to stack
-            self.context.func().stmts.push(Stmt::Expr(Expr::Push(Box::new(e))));
+            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::Push(Box::new(e)))));
             // return type
             Some(t)
         } else{
@@ -455,7 +455,7 @@ impl Transformer {
         }
         
         // pop the initialiser from stack
-        self.context.func().stmts.push(Stmt::Expr(Expr::Pop));
+        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::Pop)));
 
         return Ok(ids)
     }
@@ -505,11 +505,11 @@ impl Transformer {
                     .push(Stmt::DeclareVar(varid, ty.as_ref().unwrap().clone()));
 
                 if let Some(init) = init_expr {
-                    self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                         op: crate::ast::AssignOp::Assign,
                         variable: varid,
                         value: Box::new(init),
-                    }));
+                    })));
                 }
             } else {
                 return Err(Error::syntax_error(
@@ -541,7 +541,7 @@ impl Transformer {
         let (test, _ty) = self.translate_expr(&d.test, Some(&Type::Bool))?;
 
         let func = self.context.func();
-        func.stmts.push(Stmt::If { test: test });
+        func.stmts.push(Stmt::If { test: Box::new(test) });
         func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
         func.stmts.push(Stmt::EndIf);
 
@@ -579,7 +579,7 @@ impl Transformer {
         let (test, _ty) = self.translate_expr(&w.test, Some(&Type::Bool))?;
 
         let func = self.context.func();
-        func.stmts.push(Stmt::If { test: test });
+        func.stmts.push(Stmt::If { test: Box::new(test) });
         func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
         func.stmts.push(Stmt::EndIf);
 
@@ -622,7 +622,7 @@ impl Transformer {
                     // translate expression
                     let (e, _ty) = self.translate_expr(e, None)?;
                     // push expression
-                    self.context.func().stmts.push(Stmt::Expr(e));
+                    self.context.func().stmts.push(Stmt::Expr(Box::new(e)));
                 }
                 swc::VarDeclOrExpr::VarDecl(decl) => {
                     // only hoist non var
@@ -645,10 +645,10 @@ impl Transformer {
             let func = self.context.func();
             // break if not test
             func.stmts.push(Stmt::If {
-                test: Expr::Unary {
+                test: Box::new(Expr::Unary {
                     op: crate::ast::UnaryOp::LogicalNot,
                     value: Box::new(test),
-                },
+                }),
             });
             func.stmts.push(Stmt::Break(None));
             func.stmts.push(Stmt::EndIf);
@@ -658,7 +658,7 @@ impl Transformer {
 
         if let Some(update) = &f.update {
             let (expr, _ty) = self.translate_expr(&update, None)?;
-            self.context.func().stmts.push(Stmt::Expr(expr));
+            self.context.func().stmts.push(Stmt::Expr(Box::new(expr)));
         }
 
         self.context.end_scope();
@@ -708,11 +708,11 @@ impl Transformer {
             .func()
             .stmts
             .push(Stmt::DeclareVar(counter, Type::Int));
-        self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
             op: crate::ast::AssignOp::Assign,
             variable: counter,
             value: Box::new(Expr::Int(0)),
-        }));
+        })));
 
         match &iterable_ty {
             Type::Tuple(_) | Type::Array(_) => {
@@ -731,7 +731,7 @@ impl Transformer {
                     .stmts
                     .push(Stmt::DeclareVar(iterator_var, Type::Int));
                 // assign array.length to iterator
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(Expr::Member {
@@ -739,7 +739,7 @@ impl Transformer {
                         key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
                         optional: false,
                     }),
-                }));
+                })));
             }
             _ => {
                 let (iterator_ty, iterator_result_ty, _iterator_value_ty) =
@@ -773,7 +773,7 @@ impl Transformer {
                     .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
 
                 // iterator = iterable[Symbol.iterator]();
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(Expr::Call {
@@ -786,7 +786,7 @@ impl Transformer {
                         args: Vec::new(),
                         optional: false,
                     }),
-                }));
+                })));
             }
         };
 
@@ -799,7 +799,7 @@ impl Transformer {
             Type::Tuple(_) | Type::Array(_) => {
                 // break if counter == length
                 self.context.func().stmts.push(Stmt::If {
-                    test: Expr::Bin {
+                    test: Box::new(Expr::Bin {
                         op: crate::ast::BinOp::EqEqEq,
                         left: Box::new(Expr::VarLoad {
                             span: Span::default(),
@@ -809,14 +809,14 @@ impl Transformer {
                             span: Span::default(),
                             variable: counter,
                         }),
-                    },
+                    }),
                 });
                 self.context.func().stmts.push(Stmt::Break(None));
                 self.context.func().stmts.push(Stmt::EndIf);
             }
             _ => {
                 // iterator_result = iterator.next();
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_result_var,
                     value: Box::new(Expr::Call {
@@ -830,20 +830,20 @@ impl Transformer {
                         args: Vec::new(),
                         optional: false,
                     }),
-                }));
+                })));
 
                 // if (iterator_result.done) {
                 //    break
                 // }
                 self.context.func().stmts.push(Stmt::If {
-                    test: Expr::Member {
+                    test: Box::new(Expr::Member {
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_result_var,
                         }),
                         key: PropNameOrExpr::PropName(PropName::Ident("done".to_string())),
                         optional: false,
-                    },
+                    }),
                 });
 
                 self.context.func().stmts.push(Stmt::Break(None));
@@ -917,11 +917,11 @@ impl Transformer {
             .func()
             .stmts
             .push(Stmt::DeclareVar(counter, Type::Int));
-        self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
             op: crate::ast::AssignOp::Assign,
             variable: counter,
             value: Box::new(Expr::Int(0)),
-        }));
+        })));
 
         match &iterable_ty {
             Type::Tuple(_) | Type::Array(_) => {
@@ -951,13 +951,13 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::DeclareVar(iterator_result_var, Type::Int));
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(iterable_expr),
-                }));
+                })));
                 // assign array.length to iterator result
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_result_var,
                     value: Box::new(Expr::Member {
@@ -968,7 +968,7 @@ impl Transformer {
                         key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
                         optional: false,
                     }),
-                }));
+                })));
             }
             _ => {
                 let (iterator_ty, iterator_result_ty, value_ty) =
@@ -1004,7 +1004,7 @@ impl Transformer {
                     .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
 
                 // iterator = iterable[Symbol.iterator]();
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_var,
                     value: Box::new(Expr::Call {
@@ -1017,7 +1017,7 @@ impl Transformer {
                         args: Vec::new(),
                         optional: false,
                     }),
-                }));
+                })));
             }
         };
 
@@ -1030,7 +1030,7 @@ impl Transformer {
             Type::Tuple(_) | Type::Array(_) => {
                 // break if counter == length
                 self.context.func().stmts.push(Stmt::If {
-                    test: Expr::Bin {
+                    test: Box::new(Expr::Bin {
                         op: crate::ast::BinOp::EqEqEq,
                         left: Box::new(Expr::VarLoad {
                             span: Span::default(),
@@ -1040,14 +1040,14 @@ impl Transformer {
                             span: Span::default(),
                             variable: counter,
                         }),
-                    },
+                    }),
                 });
                 self.context.func().stmts.push(Stmt::Break(None));
                 self.context.func().stmts.push(Stmt::EndIf);
             }
             _ => {
                 // iterator_result = iterator.next();
-                self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                     op: crate::ast::AssignOp::Assign,
                     variable: iterator_result_var,
                     value: Box::new(Expr::Call {
@@ -1061,20 +1061,20 @@ impl Transformer {
                         args: Vec::new(),
                         optional: false,
                     }),
-                }));
+                })));
 
                 // if (iterator_result.done) {
                 //    break
                 // }
                 self.context.func().stmts.push(Stmt::If {
-                    test: Expr::Member {
+                    test: Box::new(Expr::Member {
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_result_var,
                         }),
                         key: PropNameOrExpr::PropName(PropName::Ident("done".to_string())),
                         optional: false,
-                    },
+                    }),
                 });
 
                 self.context.func().stmts.push(Stmt::Break(None));
@@ -1191,11 +1191,11 @@ impl Transformer {
                                     "cannot assign to constant variable",
                                 ));
                             }
-                            self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                                 op: crate::ast::AssignOp::Assign,
                                 variable: id,
                                 value: Box::new(expr),
-                            }));
+                            })));
                             return Ok(());
                         }
                         Some(Binding::Using { .. }) => {
@@ -1269,11 +1269,11 @@ impl Transformer {
                         .func()
                         .stmts
                         .push(Stmt::DeclareVar(var_id, var_ty));
-                    self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                         op: crate::ast::AssignOp::Assign,
                         variable: var_id,
                         value: Box::new(expr),
-                    }));
+                    })));
                 } else {
                     return Err(Error::syntax_error(
                         u.span,
@@ -1324,11 +1324,11 @@ impl Transformer {
                         .func()
                         .stmts
                         .push(Stmt::DeclareVar(var_id, var_ty));
-                    self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                         op: crate::ast::AssignOp::Assign,
                         variable: var_id,
                         value: Box::new(expr),
-                    }));
+                    })));
                 } else {
                     return Err(Error::syntax_error(
                         v.span,
@@ -1344,7 +1344,7 @@ impl Transformer {
         self.context.new_scope();
 
         let (test, _ty) = self.translate_expr(&i.test, Some(&Type::Bool))?;
-        self.context.func().stmts.push(Stmt::If { test: test });
+        self.context.func().stmts.push(Stmt::If { test: Box::new(test) });
 
         self.hoist_stmts([i.cons.as_ref()].into_iter())?;
         self.translate_stmt(&i.cons, None)?;
@@ -1408,7 +1408,7 @@ impl Transformer {
             }
 
             // enter catch
-            self.context.func().stmts.push(Stmt::Catch(varid, catch_ty));
+            self.context.func().stmts.push(Stmt::Catch(varid, Box::new(catch_ty)));
 
             // translate the body
             self.translate_block_stmt(&handler.body, None)?;
@@ -1435,14 +1435,14 @@ impl Transformer {
         let (test, test_ty) = self.translate_expr(&s.discriminant, None)?;
 
         // push switch
-        self.context.func().stmts.push(Stmt::Switch(test));
+        self.context.func().stmts.push(Stmt::Switch(Box::new(test)));
 
         for case in &s.cases {
             if let Some(expr) = &case.test {
                 let (expr, _ty) = self.translate_expr(&expr, Some(&test_ty))?;
 
                 self.context.new_scope();
-                self.context.func().stmts.push(Stmt::SwitchCase(expr));
+                self.context.func().stmts.push(Stmt::SwitchCase(Box::new(expr)));
 
                 self.hoist_stmts(case.cons.iter())?;
 

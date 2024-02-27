@@ -6,28 +6,38 @@ use swc_core::common::{BytePos, Spanned};
 
 pub use swc_core;
 
+/// parser or configuration file
 pub mod config;
 
+/// unique id of module
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(usize);
 
+/// a parsed module
 #[derive(Debug)]
 pub struct ParsedModule {
     /// the canonicalised name
     pub path: PathBuf,
+    /// the unique id
     pub id: ModuleId,
+    /// dependencies
     pub dependencies: Vec<ModuleId>,
+    /// the ast of module
     pub module: swc_core::ecma::ast::Module,
 }
 
+/// a set of parsed modules
 #[derive(Debug)]
 pub struct ParsedProgram {
     pub modules: HashMap<ModuleId, ParsedModule>,
 }
 
+/// a temperary structure used to parse source code
 #[derive(Default)]
 pub struct Parser {
+    /// source map holds the files and paths
     src: swc_core::common::SourceMap,
+    /// the already parsed modules
     modules: HashMap<ModuleId, ParsedModule>,
 }
 
@@ -41,17 +51,22 @@ impl Parser {
 }
 
 impl Parser {
+    /// try to resolve dependency
     pub fn resolve_dependency(&self, base_path: &Path, name: &str) -> Result<PathBuf, String> {
+        // it is a local file
         if name.starts_with("./") {
             return Ok(base_path.join(name));
         }
 
+        // it is a web file
         if name.starts_with("http://") || name.starts_with("https://") {
             log::info!("GET from {}", name);
 
+            // try to get the file from server
             match ureq::get(name).call() {
                 Ok(response) => {
                     match response.into_string() {
+                        // a response has been returned
                         Ok(body) => {
                             // creates a random file name
                             let tmp = std::env::temp_dir().join(
@@ -63,47 +78,62 @@ impl Parser {
                             );
                             // create the tmp file
                             let mut f = std::fs::File::create(&tmp).expect("faield to open file");
+                            // write the content to file
                             f.write_all(body.as_bytes()).expect("error writing file");
 
+                            // return the tmp file path
                             return Ok(tmp);
                         }
+                        // http error
                         Err(e) => return Err(e.to_string()),
                     }
                 }
+                // connection error
                 Err(e) => return Err(e.to_string()),
             };
         }
 
+        // join the path and return
         match base_path.join(name).canonicalize() {
             Ok(path) => Ok(path),
             Err(e) => Err(e.to_string()),
         }
     }
 
+    /// parses a string file
     pub fn parse_str(mut self, name: String, src: String) -> Result<ParsedProgram, String> {
+        // register the string source to source map
         let file = self
             .src
             .new_source_file(swc_core::common::FileName::Custom(name), src);
 
+        // parse the file
         self.parse_file(PathBuf::new(), &file.src, file.start_pos, file.end_pos)?;
 
+        // check if any cyclic dependency occoured
         self.check_cyclic_dependency()?;
 
+        // return the parsed program
         return Ok(ParsedProgram {
             modules: self.modules,
         });
     }
 
+    // parse a file from the gven path
     pub fn parse(mut self, main: PathBuf) -> Result<ParsedProgram, String> {
+        // parse file as a module
         self.parse_module(main)?;
 
+        // check if any cyclic dependencies occoured
         self.check_cyclic_dependency()?;
 
+        // return the parsed program
         return Ok(ParsedProgram {
             modules: self.modules,
         });
     }
 
+    // parse a file as module with a given path
     fn parse_module(&mut self, path: PathBuf) -> Result<ModuleId, String> {
         // path must be canonicalised
         let path = match path.canonicalize() {
@@ -116,14 +146,18 @@ impl Parser {
             return Ok(m.id);
         }
 
+        // load the file
         let file = match self.src.load_file(&path) {
             Ok(file) => file,
+            // file read error
             Err(e) => return Err(e.to_string()),
         };
 
+        // parse the file
         return self.parse_file(path, &file.src, file.start_pos, file.end_pos);
     }
 
+    /// parse the file
     fn parse_file(
         &mut self,
         path: PathBuf,
@@ -139,11 +173,14 @@ impl Parser {
             None,
         );
 
+        // parse the module
         let re = parser.parse_typescript_module();
 
         let mut module = match re {
             Err(e) => {
+                // lookup the position
                 let loc = self.src.lookup_char_pos(e.span_lo());
+                // format error
                 return Err(format!(
                     "{}:{}:{}: {}",
                     loc.file.name,
@@ -157,9 +194,11 @@ impl Parser {
 
         let mut dependencies = Vec::new();
 
+        // loop through statements and fin dependencies
         for item in &mut module.body {
             if let swc_core::ecma::ast::ModuleItem::ModuleDecl(m) = item {
                 match m {
+                    // import from
                     swc_core::ecma::ast::ModuleDecl::Import(i) => {
                         let p = self.resolve_dependency(&path, &i.src.value)?;
                         i.src.raw = None;
@@ -168,6 +207,7 @@ impl Parser {
                         let id = self.parse_module(p)?;
                         dependencies.push(id);
                     }
+                    // export from
                     swc_core::ecma::ast::ModuleDecl::ExportAll(e) => {
                         let p = self.resolve_dependency(&path, &e.src.value)?;
                         e.src.raw = None;
@@ -176,6 +216,7 @@ impl Parser {
                         let id = self.parse_module(p)?;
                         dependencies.push(id);
                     }
+                    // export from
                     swc_core::ecma::ast::ModuleDecl::ExportNamed(n) => {
                         if let Some(src) = &mut n.src {
                             let p = self.resolve_dependency(&path, &src.value)?;
@@ -207,6 +248,7 @@ impl Parser {
         return Ok(ModuleId(id));
     }
 
+    // check if a cyclic dependency chain occoured
     fn check_cyclic_dependency(&self) -> Result<(), String> {
         if self.modules.len() == 0 {
             return Ok(());
@@ -251,6 +293,7 @@ impl Parser {
         return Ok(());
     }
 
+    // recurring function to find cycles
     fn is_cyclic_until(&self, id: ModuleId, visited: &mut [bool], rec_stack: &mut [bool]) -> bool {
         // not visited
         if !visited[id.0] {

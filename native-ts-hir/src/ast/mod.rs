@@ -22,19 +22,29 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModuleExport {
     Undefined,
+    /// a variable
     Var(VariableId, Type),
+    /// a function
     Function(FunctionId),
+    /// a class type
     Class(ClassId),
+    /// an interface
     Interface(InterfaceId),
+    /// an enum
     Enum(EnumId),
+    /// a type alias
     Alias(AliasId),
+    /// a namespace
     NameSpace(ModuleId),
 }
 
 pub struct Module {
+    /// symbol table
     pub table: SymbolTable,
-
+    /// the unique function id of the entry function
     pub main_function: FunctionId,
+    /// default export
     pub default_export: ModuleExport,
+    /// named exports
     pub exports: HashMap<PropName, ModuleExport>,
 }

@@ -1,10 +1,13 @@
+/// HIR definitions
 pub mod ast;
+/// post transformation checks
 mod checks;
+/// utils
 mod common;
+/// symbol table data structure
 mod symbol_table;
+/// transforms AST to HIR
 pub mod transform;
-
-//pub mod passes;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,7 +18,9 @@ pub struct VarId(usize);
 impl VarId {
     /// creates a new unique identifier
     pub fn new() -> Self {
+        // static counter
         static IDS: AtomicUsize = AtomicUsize::new(0);
+        // fetch and increment counter
         return Self(IDS.fetch_add(1, Ordering::SeqCst));
     }
 }
@@ -87,6 +92,7 @@ impl core::fmt::Display for PropName {
     }
 }
 
+/// Typescript builtin symbols
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Symbol {
     Iterator,

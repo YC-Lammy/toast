@@ -7,7 +7,6 @@ use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::{
     ast::{Callee, Expr, FuncType, PropNameOrExpr, Type},
-    common::FunctionId,
     PropName,
 };
 
@@ -16,7 +15,8 @@ use super::{context::Binding, Transformer};
 type Result<T> = std::result::Result<T, Error<Span>>;
 
 impl Transformer {
-    pub fn translate_expr(
+    /// entry for translateing expressions
+    pub(crate) fn translate_expr(
         &mut self,
         expr: &swc::Expr,
         expected_ty: Option<&Type>,
@@ -34,40 +34,54 @@ impl Transformer {
                 self.translate_arrow(a, expected)?
             }
             swc::Expr::Assign(a) => self.translate_assign(a)?,
+            // await expression
             swc::Expr::Await(a) => {
+                // translate the promise
                 let (e, mut ty) = self.translate_expr(&a.arg, None)?;
 
+                // get the result type of promise
                 if let Type::Promise(p) = ty {
                     ty = *p;
                 };
 
+                // get the result type of promise in union
                 if let Type::Union(u) = ty {
+                    // create new union
                     let mut v = Vec::with_capacity(u.len());
 
                     for t in u.iter() {
+                        // type is promise
                         if let Type::Promise(p) = t {
+                            // push promise result type
                             v.push(p.as_ref().clone());
                         } else {
+                            // push the type
                             v.push(t.clone())
                         }
                     }
+                    // write union
                     ty = Type::Union(v.into_boxed_slice())
                 }
 
                 (Expr::Await(Box::new(e)), ty)
             }
+            // binary expression
             swc::Expr::Bin(b) => self.translate_bin(b)?,
+            // function call expression
             swc::Expr::Call(c) => self.translate_call(c)?,
+            // class exression
             swc::Expr::Class(c) => {
+                // class can only be declared as a type
                 return Err(Error::syntax_error(
                     c.span(),
                     "class expression not allowed",
                 ))
             }
+            // conditional expression
             swc::Expr::Cond(cond) => self.translate_cond(cond)?,
+            // function expression
             swc::Expr::Fn(f) => {
-                // generate a new function id
-                let id = FunctionId::new();
+                let id = self.hoist_function(None, &f.function)?;
                 self.translate_function(id, None, &f.function)?;
 
                 let ty = self
@@ -187,6 +201,7 @@ impl Transformer {
         return Ok((e, ty));
     }
 
+    /// array construction expression
     pub fn translate_array_expr(
         &mut self,
         a: &swc::ArrayLit,

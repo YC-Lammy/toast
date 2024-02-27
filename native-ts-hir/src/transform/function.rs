@@ -72,13 +72,13 @@ impl Transformer {
                 }
 
                 if need_cast {
-                    self.context.func().stmts.push(Stmt::Return(Expr::Cast(
+                    self.context.func().stmts.push(Stmt::Return(Box::new(Expr::Cast(
                         Box::new(expr),
                         expected.unwrap().return_ty.clone(),
-                    )))
+                    ))))
                 } else {
                     // simply return
-                    self.context.func().stmts.push(Stmt::Return(expr));
+                    self.context.func().stmts.push(Stmt::Return(Box::new(expr)));
                 }
             }
             swc::BlockStmtOrExpr::BlockStmt(b) => {

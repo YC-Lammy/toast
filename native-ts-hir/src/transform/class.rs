@@ -342,11 +342,11 @@ impl Transformer {
                         class_ty.static_properties.insert(name, (id, ty));
 
                         if let Some(init) = init {
-                            self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                                 op: crate::ast::AssignOp::Assign,
                                 variable: id,
                                 value: Box::new(init),
-                            }));
+                            })));
                         }
                     } else {
                         class_ty.properties.insert(
@@ -387,11 +387,11 @@ impl Transformer {
                         class_ty.static_properties.insert(name, (id, ty));
 
                         if let Some(init) = init {
-                            self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
                                 op: crate::ast::AssignOp::Assign,
                                 variable: id,
                                 value: Box::new(init),
-                            }));
+                            })));
                         }
                     } else {
                         class_ty.properties.insert(
