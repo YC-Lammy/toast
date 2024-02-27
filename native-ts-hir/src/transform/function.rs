@@ -117,6 +117,9 @@ impl Transformer {
             todo!("generic function")
         }
 
+        // clear the params in case of hoisting
+        self.context.func().params.clear();
+
         for (i, p) in func.params.iter().enumerate() {
             if let Some(ident) = p.pat.as_ident() {
                 if let Some(ann) = &ident.type_ann {

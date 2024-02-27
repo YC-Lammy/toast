@@ -6,7 +6,7 @@ use crate::{PropName, Symbol};
 use super::Expr;
 
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Type {
     /// any type, alias of a raw interface
     Any,
@@ -18,20 +18,26 @@ pub enum Type {
     Null,
     /// boolean
     Bool,
+    LiteralBool(bool),
     /// number, f64
     Number,
+    LiteralNumber(f64),
     /// interger, i32
     Int,
-    /// big integer, i64
+    LiteralInt(i32),
+    /// big integer, i128
     Bigint,
+    LiteralBigint(i128),
     /// string
     String,
+    LiteralString(Box<str>),
     /// symbol, represented as u64
     Symbol,
     /// regular expression object
     Regex,
     /// any object type
     Object(ClassId),
+    LiteralObject(Box<[(PropName, Type)]>),
     /// interface type
     Interface(InterfaceId),
     /// function type
@@ -55,6 +61,21 @@ pub enum Type {
     Alias(AliasId),
     /// a generic type, a placeholder to be resolved
     Generic(GenericId),
+}
+
+impl Eq for Type {}
+
+impl Ord for Type {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self {
+            Self::LiteralNumber(n) => match other {
+                Self::LiteralNumber(i) => return n.total_cmp(i),
+                _ => {}
+            },
+            _ => {}
+        }
+        return self.partial_cmp(other).unwrap();
+    }
 }
 
 impl Type {
@@ -110,17 +131,23 @@ impl Type {
             // already solved
             Type::AnyObject => unreachable!(),
             Type::Bigint
+            | Type::LiteralBigint(_)
             | Type::Enum(_)
             | Type::Function(_)
             | Type::Array(_)
             | Type::Bool
+            | Type::LiteralBool(_)
+            | Type::LiteralObject(_)
             | Type::Interface(_)
             | Type::Null
             | Type::Number
+            | Type::LiteralNumber(_)
+            | Type::LiteralInt(_)
             | Type::Object(_)
             | Type::Promise(_)
             | Type::Regex
             | Type::String
+            | Type::LiteralString(_)
             | Type::Symbol
             | Type::Map(_, _)
             | Type::Tuple(_)
@@ -185,6 +212,7 @@ impl Type {
     pub fn is_object(&self) -> bool {
         match self {
             Type::AnyObject
+            | Type::LiteralObject(_)
             | Type::Array(_)
             | Type::Function(_)
             | Type::Map(_, _)
@@ -215,22 +243,15 @@ impl Type {
     }
 
     pub fn is_array(&self) -> bool {
-        todo!()
-    }
-
-    /// TODO: flattening types
-    pub fn flattened(&self) -> Type {
         match self {
-            Type::Array(_) => {}
-            Type::Tuple(_) => {}
-            _ => {}
+            Self::Array(_) => true,
+            _ => false,
         }
-        todo!()
     }
 }
 
 /// a function type
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct FuncType {
     /// the `this` param
     pub this_ty: Type,

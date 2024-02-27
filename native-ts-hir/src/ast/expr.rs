@@ -84,7 +84,9 @@ impl From<native_ts_parser::swc_core::ecma::ast::AssignOp> for AssignOp {
             native_ts_parser::swc_core::ecma::ast::AssignOp::NullishAssign => Self::NullishAssign,
             native_ts_parser::swc_core::ecma::ast::AssignOp::RShiftAssign => Self::RShiftAssign,
             native_ts_parser::swc_core::ecma::ast::AssignOp::SubAssign => Self::SubAssign,
-            native_ts_parser::swc_core::ecma::ast::AssignOp::ZeroFillRShiftAssign => Self::ZeroFillRShiftAssign,
+            native_ts_parser::swc_core::ecma::ast::AssignOp::ZeroFillRShiftAssign => {
+                Self::ZeroFillRShiftAssign
+            }
             native_ts_parser::swc_core::ecma::ast::AssignOp::Assign => Self::Assign,
             native_ts_parser::swc_core::ecma::ast::AssignOp::OrAssign => Self::OrAssign,
         }
@@ -268,6 +270,9 @@ pub enum Expr {
     Tuple {
         values: Vec<Expr>,
     },
+    Object {
+        props: Vec<(PropName, Expr)>,
+    },
     /// constructs a class
     New {
         class: ClassId,
@@ -298,6 +303,12 @@ pub enum Expr {
         object: Box<Expr>,
         key: PropNameOrExpr,
     },
+    /// push value to stack
+    Push(Box<Expr>),
+    /// read value from top of stack
+    ReadStack,
+    /// pop value from stack
+    Pop,
     /// returns the value with variable type
     VarAssign {
         op: AssignOp,

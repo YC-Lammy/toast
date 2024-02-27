@@ -168,72 +168,296 @@ impl Transformer {
         return Ok(());
     }
 
+    /// variable declaration
     pub fn translate_var_decl(&mut self, decl: &swc::VarDecl) -> Result<Vec<VariableId>> {
         let mut ids = Vec::new();
 
         for d in &decl.decls {
-            if let Some(ident) = d.name.as_ident() {
-                let varid = VariableId::new();
-                ids.push(varid);
-
-                let mut ty = None;
-                let mut init_expr = None;
-
-                if let Some(ann) = &ident.type_ann {
-                    ty = Some(self.translate_type(&ann.type_ann)?);
-                }
-                if let Some(init) = &d.init {
-                    let (mut init, init_ty) = self.translate_expr(&init, ty.as_ref())?;
-
-                    if ty.is_none() {
-                        if init_ty == Type::Int {
-                            ty = Some(Type::Number);
-                            init = Expr::Cast(Box::new(init), Type::Number);
-                        } else {
-                            ty = Some(init_ty);
-                        }
-                    }
-
-                    init_expr = Some(init);
-                }
-
-                if ty.is_none() {
-                    return Err(Error::syntax_error(ident.span, "missing type annotation"));
-                }
-
-                // declare variable
-                if !self.context.declare(
-                    &ident.sym,
-                    super::context::Binding::Var {
-                        writable: decl.kind != swc::VarDeclKind::Const,
-                        redeclarable: decl.kind == swc::VarDeclKind::Var,
-                        id: varid,
-                        ty: ty.as_ref().unwrap().clone(),
-                    },
-                ) {
-                    return Err(Error::syntax_error(ident.span, "duplicated identifier"));
-                }
-
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(varid, ty.unwrap()));
-
-                if let Some(init) = init_expr {
-                    self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
-                        op: crate::ast::AssignOp::Assign,
-                        variable: varid,
-                        value: Box::new(init),
-                    }));
-                }
-            } else {
-                return Err(Error::syntax_error(
-                    d.span,
-                    "destructive variable not supported",
-                ));
-            }
+            let init = if let Some(init) = &d.init{
+                Some(self.translate_expr(&init, None)?)
+            } else{
+                None
+            };
+            
+            ids.extend_from_slice(
+                &self.translate_pat_var_decl(decl.kind, &d.name, init, None)?)
         }
         return Ok(ids);
+    }
+
+    fn translate_pat_var_decl(&mut self, kind: swc::VarDeclKind, pat: &swc::Pat, init: Option<(Expr, Type)>, parent_ann: Option<(Type, Span)>) -> Result<Vec<VariableId>>{
+        match pat {
+            swc::Pat::Ident(id) => {
+                Ok(vec![self.translate_ident_var_dec(
+                    kind,
+                    id,
+                    init,
+                    parent_ann
+                )?])
+            }
+            swc::Pat::Array(a) => {
+                self.translate_array_pat_decl(
+                    kind,
+                    a,
+                    init,
+                    parent_ann
+                )
+            }
+            swc::Pat::Object(obj) => {
+                self.tranlslate_object_pat_decl(
+                    kind,
+                    obj,
+                    init,
+                    parent_ann
+                )
+            }
+            swc::Pat::Assign(a) => {
+                return Err(Error::syntax_error(
+                    a.span,
+                    "invalid left-hand side assignment",
+                ))
+            }
+            swc::Pat::Expr(e) => {
+                return Err(Error::syntax_error(
+                    e.span(),
+                    "invalid left-hand side assignment",
+                ))
+            }
+            swc::Pat::Invalid(i) => {
+                return Err(Error::syntax_error(
+                    i.span,
+                    "invalid left-hand side assignment",
+                ))
+            }
+            // todo: rest assignment
+            swc::Pat::Rest(r) => {
+                return Err(Error::syntax_error(
+                    r.dot3_token,
+                    "rest assignment not supportd",
+                ))
+            }
+        }
+    }
+
+    fn translate_ident_var_dec(
+        &mut self,
+        kind: swc::VarDeclKind,
+        ident: &swc::BindingIdent,
+        init: Option<(Expr, Type)>,
+        parent_ann: Option<(Type, Span)>
+    ) -> Result<VariableId> {
+        let varid = VariableId::new();
+
+        let mut ty = None;
+        let mut init_expr = None;
+
+        if let Some(ann) = &ident.type_ann {
+            ty = Some(self.translate_type(&ann.type_ann)?);
+        } else{
+            if let Some((ann, _)) = parent_ann{
+                ty = Some(ann);
+            }
+        }
+
+        if let Some((mut init, init_ty)) = init {
+            match init_ty {
+                Type::LiteralBigint(_) => {
+                    ty = Some(Type::Bigint);
+                }
+                Type::LiteralBool(_) => ty = Some(Type::Bool),
+                Type::LiteralInt(_) | Type::Int => {
+                    ty = Some(Type::Number);
+                    init = Expr::Cast(Box::new(init), Type::Number);
+                }
+                Type::LiteralNumber(_) => ty = Some(Type::Number),
+                Type::LiteralString(_) => ty = Some(Type::String),
+                _ => ty = Some(init_ty),
+            }
+
+            init_expr = Some(init);
+        }
+
+        if ty.is_none() {
+            return Err(Error::syntax_error(ident.span, "missing type annotation"));
+        }
+
+        // declare variable
+        if !self.context.declare(
+            &ident.sym,
+            super::context::Binding::Var {
+                writable: kind != swc::VarDeclKind::Const,
+                redeclarable: kind == swc::VarDeclKind::Var,
+                id: varid,
+                ty: ty.as_ref().unwrap().clone(),
+            },
+        ) {
+            // the identifier is already declared
+            return Err(Error::syntax_error(ident.span, "duplicated identifier"));
+        }
+
+        self.context
+            .func()
+            .stmts
+            .push(Stmt::DeclareVar(varid, ty.unwrap()));
+
+        if let Some(init) = init_expr {
+            self.context.func().stmts.push(Stmt::Expr(Expr::VarAssign {
+                op: crate::ast::AssignOp::Assign,
+                variable: varid,
+                value: Box::new(init),
+            }));
+        }
+
+        return Ok(varid);
+    }
+
+    fn tranlslate_object_pat_decl(
+        &mut self,
+        kind: swc::VarDeclKind,
+        obj: &swc::ObjectPat,
+        init: Option<(Expr, Type)>,
+        // annotation given by parent pattern
+        parent_ann: Option<(Type, Span)>,
+    ) -> Result<Vec<VariableId>> {
+        if obj.optional {
+            return Err(Error::syntax_error(obj.span, "object pattern cannot be optional"))
+        }
+
+        todo!()
+    }
+
+    fn translate_array_pat_decl(
+        &mut self,
+        kind: swc::VarDeclKind,
+        pat: &swc::ArrayPat,
+        init: Option<(Expr, Type)>,
+        // annotation given by parent pattern
+        parent_ann: Option<(Type, Span)>,
+    ) -> Result<Vec<VariableId>> {
+        // variable ids declared
+        let mut ids = Vec::new();
+        // todo: optional assignment
+        if pat.optional{
+            return Err(Error::syntax_error(pat.span, "array pattern cannot be optional"))
+        }
+        // translate type annotation
+        let (ty_ann, ty_ann_span) = if let Some(ann) = pat.type_ann.as_ref() {
+            // type annotation is already given
+            if parent_ann.is_some() {
+                // a duplicated annotation happened
+                return Err(Error::syntax_error(ann.span, "conflicted type annotation"));
+            }
+            // translate type annotation
+            let ty = self.translate_type(&ann.type_ann)?;
+            // only accepts array or tuple
+            match &ty {
+                Type::Array(_) => {
+                    // do nothing
+                }
+                Type::Tuple(t) => {
+                    // check tuple length
+                    if t.len() != pat.elems.len() {
+                        return Err(Error::syntax_error(
+                            ann.span,
+                            "number of elements in tuple does not match that of pattern",
+                        ));
+                    }
+                }
+                // not tuple or array
+                _ => {
+                    return Err(Error::syntax_error(
+                        ann.span,
+                        "expected array or tuple type",
+                    ))
+                }
+            }
+            // return type
+            (Some(ty), Some(ann.span))
+        } else {
+            if let Some((ann, ann_span)) = parent_ann {
+                // only accepts array or tuple
+                match &ann {
+                    // do nothing for array type
+                    Type::Array(_) => {}
+                    // tuple type must have exact length
+                    Type::Tuple(t) => {
+                        // check length of tuple type
+                        if t.len() != pat.elems.len() {
+                            return Err(Error::syntax_error(
+                                ann_span,
+                                "number of elements in tuple does not match that of pattern",
+                            ));
+                        }
+                    }
+                    // must be array or tuple
+                    _ => {
+                        return Err(Error::syntax_error(
+                            ann_span,
+                            "expected array or tuple type",
+                        ))
+                    }
+                }
+                // return annotation
+                (Some(ann), Some(ann_span))
+            } else {
+                // no annotation
+                (None, None)
+            }
+        };
+
+        // push the initialiser to stack and get its type
+        let init_ty = if let Some((e, t)) = init{
+            // push the initialiser to stack
+            self.context.func().stmts.push(Stmt::Expr(Expr::Push(Box::new(e))));
+            // return type
+            Some(t)
+        } else{
+            // no initialiser
+            None
+        };
+
+        for i in 0..pat.elems.len(){
+            // get the type of element at index
+            let ann_prop_ty = match &ty_ann{
+                Some(Type::Array(a)) => Some((a.as_ref().clone(), ty_ann_span.unwrap())),
+                Some(Type::Tuple(t)) => Some((t[i].clone(), ty_ann_span.unwrap())),
+                _ => None
+            };
+
+            // if some, a variable is declared, other wise, skip index
+            if let Some(p) = &pat.elems[i]{
+                // an initialiser is present
+                if let Some(init_ty) = &init_ty{
+                    // check if initialiser has index
+                    if let Some(prop_ty) = self.type_has_property(init_ty, &PropName::Int(i as _), false){
+                        // construct member expression
+                        let member_expr = Expr::Member { 
+                            object: Box::new(Expr::ReadStack), 
+                            key: PropNameOrExpr::PropName(PropName::Int(i as _)), 
+                            optional: false 
+                        };
+                        // translate pat variable declare
+                        let vs = self.translate_pat_var_decl(kind, p, Some((member_expr, prop_ty)), ann_prop_ty)?;
+                        // push ids
+                        ids.extend_from_slice(&vs);
+
+                    } else{
+                        // the initialiser does not have index
+                        return Err(Error::syntax_error(p.span(), format!("type '' has no property '{}'", i)))
+                    }
+                } else{
+                    // no initialiser
+                    let vs = self.translate_pat_var_decl(kind, p, None, ann_prop_ty)?;
+                    // push ids
+                    ids.extend_from_slice(&vs);
+                }
+            };
+        }
+        
+        // pop the initialiser from stack
+        self.context.func().stmts.push(Stmt::Expr(Expr::Pop));
+
+        return Ok(ids)
     }
 
     pub fn translate_using_decl(&mut self, decl: &swc::UsingDecl) -> Result<Vec<VariableId>> {

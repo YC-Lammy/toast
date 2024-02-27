@@ -614,6 +614,11 @@ impl Transformer {
 
                 *ty = t.clone();
             }
+            Type::LiteralObject(obj) => {
+                for (_p, ty) in obj.iter_mut() {
+                    self.normalise_type(ty);
+                }
+            }
             Type::Array(elem) => {
                 self.normalise_type(elem);
             }
@@ -678,13 +683,18 @@ impl Transformer {
             Type::Any
             | Type::AnyObject
             | Type::Bigint
+            | Type::LiteralBigint(_)
             | Type::Bool
+            | Type::LiteralBool(_)
             | Type::Int
             | Type::Null
             | Type::Number
+            | Type::LiteralNumber(_)
+            | Type::LiteralInt(_)
             | Type::Object(_)
             | Type::Regex
             | Type::String
+            | Type::LiteralString(_)
             | Type::Symbol
             | Type::Undefined
             | Type::Interface(_)

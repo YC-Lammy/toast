@@ -1077,6 +1077,12 @@ impl Transformer {
             return Ok(());
         }
 
+        if let Type::Union(u) = ty {
+            if u.iter().all(|t| self.type_check(span, t, fulfills).is_ok()) {
+                return Ok(());
+            }
+        }
+
         match fulfills {
             // every type can be converted to any and bool
             Type::Bool | Type::Any => return Ok(()),
@@ -1087,9 +1093,20 @@ impl Transformer {
                     return Ok(());
                 }
             }
+            Type::Array(array_elem) => {
+                // a tuple may be converted to array
+                if let Type::Tuple(t) = ty {
+                    // check if all element of tuple is convertable to element of array
+                    if t.iter()
+                        .all(|e| self.type_check(span, e, &array_elem).is_ok())
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+
             // these types must be strictly obayed
-            Type::Array(_)
-            | Type::Bigint
+            Type::LiteralObject(_)
             | Type::Enum(_)
             | Type::Function(_)
             | Type::Generic(_)
@@ -1097,13 +1114,35 @@ impl Transformer {
             | Type::Null
             | Type::Promise(_)
             | Type::Regex
-            | Type::String
+            | Type::LiteralBool(_)
+            | Type::LiteralNumber(_)
+            | Type::LiteralInt(_)
+            | Type::LiteralBigint(_)
+            | Type::LiteralString(_)
             | Type::Symbol
             | Type::Tuple(_)
             | Type::Undefined => {}
+            // bigint
+            Type::Bigint => {
+                if let Type::LiteralBigint(_) = ty {
+                    return Ok(());
+                }
+            }
+            // string
+            Type::String => {
+                if let Type::LiteralString(_) = ty {
+                    return Ok(());
+                }
+            }
             // number and int are compatable
             Type::Number | Type::Int => {
                 if ty == &Type::Number || ty == &Type::Int {
+                    return Ok(());
+                }
+                if let Type::LiteralInt(_) = ty {
+                    return Ok(());
+                }
+                if let Type::LiteralNumber(_) = ty {
                     return Ok(());
                 }
             }
@@ -1215,7 +1254,7 @@ impl Transformer {
                     self.type_has_property(ty, &PropName::Ident("next".to_owned()), true)
                 {
                     if let Type::Function(func) = &next_ty {
-                        if iter_elem.as_ref() == &func.return_ty {
+                        if func.params.len() == 0 && iter_elem.as_ref() == &func.return_ty {
                             return Ok(());
                         }
                     }
@@ -1251,6 +1290,14 @@ impl Transformer {
                     },
                     _ => {}
                 };
+                return None;
+            }
+            Type::LiteralObject(obj) => {
+                for (p, ty) in obj.iter() {
+                    if p == prop {
+                        return Some(ty.clone());
+                    }
+                }
                 return None;
             }
             Type::Object(class) => {
@@ -1295,14 +1342,14 @@ impl Transformer {
             }
             Type::Tuple(elems) => match prop {
                 PropName::Int(index) => {
-                    if *index >= elems.len() as i32{
-                        return None
+                    if *index >= elems.len() as i32 {
+                        return None;
                     }
-                    if *index < 0{
-                        return None
+                    if *index < 0 {
+                        return None;
                     }
-                    return Some(elems[*index as usize].clone())
-                },
+                    return Some(elems[*index as usize].clone());
+                }
                 PropName::Ident(ident) => match ident.as_str() {
                     "length" => Some(Type::Int),
                     _ => None,

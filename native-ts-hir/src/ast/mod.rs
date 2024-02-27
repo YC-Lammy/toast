@@ -19,7 +19,7 @@ use crate::{
     PropName,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModuleExport {
     Undefined,
     Var(VariableId, Type),

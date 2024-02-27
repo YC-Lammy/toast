@@ -383,12 +383,24 @@ impl<'a> Formatter<'a> {
             Type::Alias(_) => unreachable!(),
             Type::Any => self.write_str("any"),
             Type::AnyObject => self.write_str("object"),
+            Type::LiteralObject(obj) => {
+                self.write_str("{");
+                for (p, ty) in obj.iter() {
+                    self.format_propname(p);
+                    self.write_str(":");
+                    self.format_ty(ty);
+                    self.write_str(", ");
+                }
+                self.write_str("}");
+            }
             Type::Array(a) => {
                 self.format_ty(a);
                 self.write_str("[]")
             }
             Type::Bigint => self.write_str("bigint"),
+            Type::LiteralBigint(b) => self.write_int(*b),
             Type::Bool => self.write_str("boolean"),
+            Type::LiteralBool(b) => self.write_str(if *b { "true" } else { "false" }),
             Type::Enum(e) => {
                 self.write_str("enum");
                 self.write_int(e.0);
@@ -417,6 +429,12 @@ impl<'a> Formatter<'a> {
                 self.write_int(id.0);
             }
             Type::Int | Type::Number => self.write_str("number"),
+            Type::LiteralInt(i) => {
+                self.write_int(*i);
+            }
+            Type::LiteralNumber(n) => {
+                self.write_str(&n.to_string());
+            }
             Type::Map(k, v) => {
                 self.write_str("Map<");
                 self.format_ty(k);
@@ -437,6 +455,7 @@ impl<'a> Formatter<'a> {
             }
             Type::Regex => self.write_str("Regex"),
             Type::String => self.write_str("string"),
+            Type::LiteralString(s) => self.write_str(&s),
             Type::Symbol => self.write_str("symbol"),
             Type::Undefined => self.write_str("undefined"),
             Type::Tuple(tu) => {
@@ -615,6 +634,28 @@ impl<'a> Formatter<'a> {
                 self.write_str(")");
             }
             Expr::Null => self.write_str("null"),
+            Expr::Object { props } => {
+                self.write_str("{");
+                for (p, v) in props {
+                    self.format_propname(p);
+                    self.write_str(":");
+                    self.format_expr(v);
+                    self.write_str(",")
+                }
+                self.write_str("}")
+            }
+            Expr::Push(e) => {
+                self.write_str("__pushstack__(");
+                self.format_expr(e);
+                self.write_str(")")
+            }
+            Expr::Pop => {
+                self.write_str("__popstack__()");
+            }
+            Expr::ReadStack => {
+                self.write_str("__readstack__()");
+            }
+            // todo: regex
             Expr::Regex() => {}
             Expr::Seq(a, b) => {
                 self.write_str("(");

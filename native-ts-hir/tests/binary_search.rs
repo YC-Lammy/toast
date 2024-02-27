@@ -3,7 +3,8 @@ use native_ts_hir::transform::Transformer;
 
 #[test]
 fn binary_search() {
-    let s = "function binarySearch(arr: number[], x: number): number
+    let s = "binarySearch([], 0);
+    function binarySearch(arr: number[], x: number): number
     {    
         let l = 0;
         let r = arr.length - 1;
@@ -20,7 +21,7 @@ fn binary_search() {
             // it can only be present in left subarray
             if (arr[mid] > x)
                 r = mid - 1;
-                 
+
             // Else the element can only be present
             // in right subarray
             else
@@ -30,9 +31,7 @@ fn binary_search() {
         // We reach here when element is not
         // present in array
         return -1;
-    }
-    
-    binarySearch([], 0)";
+    }";
 
     let parser = native_ts_parser::Parser::new();
     let m = parser

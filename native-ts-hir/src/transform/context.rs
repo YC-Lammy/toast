@@ -74,7 +74,16 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Self {
+        // main function id
         let function_id = FunctionId::new();
+
+        // construct scope
+        let global_scope = Scope {
+            function_id,
+            bindings: Default::default(),
+        };
+
+        // construct context
         let mut s = Self {
             generic_classes: Default::default(),
             classes: Default::default(),
@@ -86,12 +95,10 @@ impl Context {
             generic_alias: Default::default(),
             alias: Default::default(),
             global_func: function_id,
-            scopes: vec![Scope {
-                function_id,
-                bindings: Default::default(),
-            }],
+            scopes: vec![global_scope],
         };
 
+        // insert main function
         s.functions.insert(
             function_id,
             Function {
@@ -105,6 +112,7 @@ impl Context {
         );
         return s;
     }
+
     pub fn new_function(&mut self, id: FunctionId) {
         self.scopes.push(Scope {
             function_id: id,

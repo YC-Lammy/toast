@@ -3,7 +3,7 @@ use crate::common::{ClassId, EnumId, InterfaceId};
 use super::FuncType;
 
 #[repr(C)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Type {
     Any,
     /// not number, string, boolean, bigint, symbol, null, or undefined.

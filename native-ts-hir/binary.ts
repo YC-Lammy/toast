@@ -1,3 +1,5 @@
+binarySearch([], 0)
+
 function binarySearch(arr: number[], x: number): number
 {    
     let l = 0;
@@ -26,5 +28,3 @@ function binarySearch(arr: number[], x: number): number
     // present in array
     return -1;
 }
-
-binarySearch([], 0)

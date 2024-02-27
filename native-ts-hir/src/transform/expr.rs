@@ -91,6 +91,7 @@ impl Transformer {
             swc::Expr::New(n) => self.translate_new_expr(n)?,
             swc::Expr::Seq(s) => self.translate_seq_expr(s, expected_ty)?,
             swc::Expr::Lit(l) => self.translate_lit(l, expected_ty)?,
+            // todo: string template
             swc::Expr::Tpl(_) => todo!(),
             swc::Expr::TaggedTpl(_) => todo!(),
             swc::Expr::Yield(y) => {
@@ -309,175 +310,536 @@ impl Transformer {
     }
 
     pub fn translate_assign(&mut self, a: &swc::AssignExpr) -> Result<(Expr, Type)> {
-        
         let (value, value_ty) = self.translate_expr(&a.right, None)?;
-        
-        return self.translate_assign_target(a.span,&a.left, a.op, value, value_ty)
+
+        return self.translate_assign_target(a.span, &a.left, a.op, value, value_ty);
     }
 
-    pub fn translate_assign_target(&mut self, span: Span, target: &swc::AssignTarget, op: swc::AssignOp, value: Expr, value_ty: Type) -> Result<(Expr, Type)>{
-        match target{
-            swc::AssignTarget::Simple(simple) => {
-                match simple{
-                    swc::SimpleAssignTarget::Ident(id) => self.translate_var_assign(span, &id.id, op, value, value_ty),
-                    swc::SimpleAssignTarget::Member(m) => self.translate_member_assign(span, m, op, value, value_ty),
-                    swc::SimpleAssignTarget::Invalid(i) => Err(Error::syntax_error(i.span, "invalid assignment target")),
-                    _ => todo!("assignment")
+    pub fn translate_assign_target(
+        &mut self,
+        span: Span,
+        target: &swc::AssignTarget,
+        op: swc::AssignOp,
+        value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
+        match target {
+            // trnalate simple assignments
+            swc::AssignTarget::Simple(simple) => match simple {
+                swc::SimpleAssignTarget::Ident(id) => {
+                    // variable assignment
+                    self.translate_var_assign(span, &id.id, op, value, value_ty)
                 }
-            }
-            swc::AssignTarget::Pat(p) => {
-                match p{
-                    swc::AssignTargetPat::Object(pat) => self.translate_object_pat_assign(pat, op, value),
-                    swc::AssignTargetPat::Array(pat) => self.translate_array_pat_assign(pat, op, value),
-                    swc::AssignTargetPat::Invalid(i) => Err(Error::syntax_error(i.span, "invalid pattern"))
+                swc::SimpleAssignTarget::Member(m) => {
+                    // member assignment
+                    self.translate_member_assign(span, m, op, value, value_ty)
                 }
-            }
+                swc::SimpleAssignTarget::Invalid(i) => {
+                    // invalid target
+                    Err(Error::syntax_error(i.span, "invalid assignment target"))
+                }
+                // todo: simple assignments
+                _ => todo!("assignment"),
+            },
+            // translate pattern assignments
+            swc::AssignTarget::Pat(p) => match p {
+                swc::AssignTargetPat::Object(pat) => {
+                    // only assignment is allowed
+                    if op != swc::AssignOp::Assign {
+                        return Err(Error::syntax_error(
+                            span,
+                            format!("operator '{}' is not allowed on type 'object'", op.as_str()),
+                        ));
+                    }
+                    // translate object pattern assignment
+                    self.translate_object_pat_assign(pat, value, value_ty)
+                }
+                swc::AssignTargetPat::Array(pat) => {
+                    // only assignment is allowed
+                    if op != swc::AssignOp::Assign {
+                        return Err(Error::syntax_error(
+                            span,
+                            format!("operator '{}' is not allowed on type 'object'", op.as_str()),
+                        ));
+                    }
+                    // translate array pattern assignment
+                    self.translate_array_pat_assign(pat, value, value_ty)
+                }
+                swc::AssignTargetPat::Invalid(i) => {
+                    // invalid pattern
+                    Err(Error::syntax_error(i.span, "invalid pattern"))
+                }
+            },
         }
     }
 
-    fn check_assign_op_type(&mut self, span: Span, op: swc::AssignOp, ty: &Type) -> Result<()>{
-        match op{
-            swc::AssignOp::Assign => {},
-            swc::AssignOp::AddAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int && ty != &Type::String{
-                    return Err(Error::syntax_error(span, "operator '+=' only accepts number, bigint and string"))
+    /// check the operand type of an assignment operation
+    fn check_assign_op_type(&mut self, span: Span, op: swc::AssignOp, ty: &Type) -> Result<()> {
+        match op {
+            swc::AssignOp::Assign => {}
+            swc::AssignOp::AddAssign => match ty {
+                Type::Bigint
+                | Type::LiteralBigint(_)
+                | Type::Number
+                | Type::LiteralNumber(_)
+                | Type::Int
+                | Type::LiteralInt(_)
+                | Type::String
+                | Type::LiteralString(_) => {}
+                _ => {
+                    return Err(Error::syntax_error(
+                        span,
+                        "operator '+=' only accepts number, bigint and string",
+                    ))
                 }
             },
-            swc::AssignOp::SubAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '-=' only accepts number and bigint"))
+            swc::AssignOp::SubAssign
+            | swc::AssignOp::MulAssign
+            | swc::AssignOp::DivAssign
+            | swc::AssignOp::ExpAssign
+            | swc::AssignOp::ModAssign
+            | swc::AssignOp::LShiftAssign
+            | swc::AssignOp::RShiftAssign
+            | swc::AssignOp::ZeroFillRShiftAssign
+            | swc::AssignOp::BitAndAssign
+            | swc::AssignOp::BitOrAssign
+            | swc::AssignOp::BitXorAssign => match ty {
+                Type::Bigint
+                | Type::LiteralBigint(_)
+                | Type::Number
+                | Type::LiteralNumber(_)
+                | Type::Int
+                | Type::LiteralInt(_) => {}
+                _ => {
+                    return Err(Error::syntax_error(
+                        span,
+                        format!("operator '{}' only accepts number and bigint", op.as_str()),
+                    ))
                 }
-            }
-            swc::AssignOp::MulAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '*=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::DivAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '/=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::ExpAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '**=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::ModAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '%=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::LShiftAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '<<=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::RShiftAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '>>=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::ZeroFillRShiftAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '>>>=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::BitAndAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '&=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::BitOrAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '|=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::BitXorAssign => {
-                if ty != &Type::Bigint && ty != &Type::Number && ty != &Type::Int{
-                    return Err(Error::syntax_error(span, "operator '^=' only accepts number and bigint"))
-                }
-            }
-            swc::AssignOp::NullishAssign => {},
-            swc::AssignOp::OrAssign => {},
+            },
+            swc::AssignOp::NullishAssign => {}
+            swc::AssignOp::OrAssign => {}
             swc::AssignOp::AndAssign => {
-                if ty != &Type::Bool{
-                    return Err(Error::syntax_error(span, "operator '&&=' only accepts boolean"))
+                if ty != &Type::Bool {
+                    return Err(Error::syntax_error(
+                        span,
+                        "operator '&&=' only accepts boolean",
+                    ));
                 }
             }
         };
 
-        return Ok(())
+        return Ok(());
     }
 
-    pub fn translate_var_assign(&mut self, span: Span, var: &swc::Ident, op: swc::AssignOp, mut value: Expr, value_ty: Type) -> Result<(Expr, Type)>{
+    pub fn translate_var_assign(
+        &mut self,
+        span: Span,
+        var: &swc::Ident,
+        op: swc::AssignOp,
+        mut value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
         // get the variable id and variable type
-        let (varid, var_ty) = if let Some(binding) = self.context.find(&var.sym){
-            match binding{
-                Binding::Var { writable, redeclarable:_, id, ty } => {
+        let (varid, var_ty) = if let Some(binding) = self.context.find(&var.sym) {
+            match binding {
+                Binding::Var {
+                    writable,
+                    redeclarable: _,
+                    id,
+                    ty,
+                } => {
                     // constants are not writable
-                    if !*writable{
-                        return Err(Error::syntax_error(var.span, format!("variable '{}' is immutable", &var.sym)))
+                    if !*writable {
+                        return Err(Error::syntax_error(
+                            var.span,
+                            format!("variable '{}' is immutable", &var.sym),
+                        ));
                     }
                     // return id and type
                     (*id, ty.clone())
                 }
                 // using declare cannot be mutated
                 Binding::Using { .. } => {
-                    return Err(Error::syntax_error(var.span, format!("variable '{}' is immutable", &var.sym)))
+                    return Err(Error::syntax_error(
+                        var.span,
+                        format!("variable '{}' is immutable", &var.sym),
+                    ))
                 }
                 // all other bindings are not considered variable
-                _ => return Err(Error::syntax_error(var.span, format!("identifier '{}' is not a variable", &var.sym)))
-            } 
-        } else{
-            return Err(Error::syntax_error(var.span, format!("undeclared identifier '{}'", var.sym)))
+                _ => {
+                    return Err(Error::syntax_error(
+                        var.span,
+                        format!("identifier '{}' is not a variable", &var.sym),
+                    ))
+                }
+            }
+        } else {
+            return Err(Error::syntax_error(
+                var.span,
+                format!("undeclared identifier '{}'", var.sym),
+            ));
         };
 
         // type check
         self.type_check(var.span, &value_ty, &var_ty)?;
 
-        if value_ty != var_ty{
+        if value_ty != var_ty {
             value = Expr::Cast(Box::new(value), var_ty.clone());
         };
 
+        // check if operand type is valid for assignment
         self.check_assign_op_type(span, op, &var_ty)?;
 
-        return Ok((Expr::VarAssign { op: op.into(), variable: varid, value: Box::new(value) }, var_ty))
+        return Ok((
+            Expr::VarAssign {
+                op: op.into(),
+                variable: varid,
+                value: Box::new(value),
+            },
+            var_ty,
+        ));
     }
 
-    pub fn translate_member_assign(&mut self, span: Span, member: &swc::MemberExpr, op: swc::AssignOp, mut value: Expr, value_ty: Type) -> Result<(Expr, Type)>{
+    pub fn translate_member_assign(
+        &mut self,
+        span: Span,
+        member: &swc::MemberExpr,
+        op: swc::AssignOp,
+        mut value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
         let (member_expr, member_ty) = self.translate_member(member)?;
 
         self.type_check(span, &value_ty, &member_ty)?;
 
-        if value_ty != member_ty{
+        if value_ty != member_ty {
             value = Expr::Cast(Box::new(value), member_ty.clone());
         }
-        
-        if let Expr::Member { object, key, optional } = member_expr{
-            if optional{
-                return Err(Error::syntax_error(member.span(), "invalid left-hand side assignment"))
+
+        if let Expr::Member {
+            object,
+            key,
+            optional,
+        } = member_expr
+        {
+            if optional {
+                return Err(Error::syntax_error(
+                    member.span(),
+                    "invalid left-hand side assignment",
+                ));
             }
 
             self.check_assign_op_type(span, op, &member_ty)?;
 
-            return Ok((Expr::MemberAssign { 
-                op: op.into(), 
-                object: object, 
-                key: key, 
-                value: Box::new(value) 
-            }, member_ty))
-        } else{
+            return Ok((
+                Expr::MemberAssign {
+                    op: op.into(),
+                    object: object,
+                    key: key,
+                    value: Box::new(value),
+                },
+                member_ty,
+            ));
+        } else {
             unreachable!()
         }
     }
 
-    pub fn translate_object_pat_assign(&mut self, pat: &swc::ObjectPat, op: swc::AssignOp, value: Expr) -> Result<(Expr, Type)>{
-        todo!()
+    pub fn translate_object_pat_assign(
+        &mut self,
+        pat: &swc::ObjectPat,
+        value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
+        // top level pattern cannot be optional
+        if pat.optional {
+            return Err(Error::syntax_error(
+                pat.span,
+                "object pattern cannot be optional",
+            ));
+        }
+
+        // type annotation not allowed
+        if let Some(ann) = &pat.type_ann {
+            return Err(Error::syntax_error(ann.span, "type annotation not allowed"));
+        }
+
+        // result object expression
+        let mut obj_expr = Vec::new();
+        // result object type
+        let mut obj_ty = Vec::new();
+        // counter
+        let mut i = 0;
+
+        // translate property assignment
+        for prop in &pat.props {
+            // is first property
+            let is_first = i == 0;
+            // is last property
+            let is_last = i == pat.props.len() - 1;
+            // increment counter
+            i += 1;
+
+            match prop {
+                swc::ObjectPatProp::Assign(a) => {
+                    // construct prop name
+                    let prop = PropName::Ident(a.key.id.sym.to_string());
+                    // default value
+                    if let Some(_) = &a.value {
+                        // todo: assignment pattern
+                        return Err(Error::syntax_error(
+                            a.span,
+                            "default assignment is not allowed",
+                        ));
+                    }
+                    // type annotation not allowed
+                    if let Some(ann) = &a.key.type_ann {
+                        return Err(Error::syntax_error(ann.span, "type annotation not allowed"))
+                    }
+
+                    // value type of property
+                    let value_ty =
+                        if let Some(value_ty) = self.type_has_property(&value_ty, &prop, false) {
+                            value_ty
+                        } else {
+                            return Err(Error::syntax_error(
+                                a.span,
+                                format!("value has no property '{}'", a.key.id.sym),
+                            ));
+                        };
+
+                    let v = if is_first {
+                        // todo: avoid clone
+                        Expr::Push(Box::new(value.clone()))
+                    } else if is_last {
+                        Expr::Pop
+                    } else {
+                        Expr::ReadStack
+                    };
+
+                    let v = Expr::Member {
+                        object: Box::new(v),
+                        key: PropNameOrExpr::PropName(prop.clone()),
+                        optional: false,
+                    };
+
+                    let (assign_expr, assign_ty) =
+                        self.translate_var_assign(a.span, &a.key.id, swc::AssignOp::Assign, v, value_ty)?;
+
+                    obj_expr.push((prop.clone(), assign_expr));
+                    obj_ty.push((prop, assign_ty));
+                }
+                swc::ObjectPatProp::KeyValue(k) => {
+                    let key = self.translate_prop_name(&k.key)?;
+                    let key = match key {
+                        PropNameOrExpr::PropName(p) => p,
+                        PropNameOrExpr::Expr(_, _) => unimplemented!(),
+                    };
+
+                    let v = if is_first {
+                        // todo: avoid clone
+                        Expr::Push(Box::new(value.clone()))
+                    } else if is_last {
+                        Expr::Pop
+                    } else {
+                        Expr::ReadStack
+                    };
+
+                    let v = Expr::Member {
+                        object: Box::new(v),
+                        key: PropNameOrExpr::PropName(key.clone()),
+                        optional: false,
+                    };
+
+                    if let Some(value_ty) = self.type_has_property(&value_ty, &key, false) {
+                        // translate pattern assignment
+                        let (expr, assign_ty) = self.translate_pat_assign(
+                            &k.value,
+                            swc::AssignOp::Assign,
+                            v,
+                            value_ty,
+                        )?;
+
+                        obj_expr.push((key.clone(), expr));
+                        obj_ty.push((key, assign_ty))
+                        
+                    } else {
+                        return Err(Error::syntax_error(
+                            k.key.span(),
+                            format!("type '' has no property '{}'", key),
+                        ));
+                    }
+                }
+                swc::ObjectPatProp::Rest(r) => {
+                    // todo: rest assignment
+                    return Err(Error::syntax_error(
+                        r.dot3_token,
+                        "rest assignment not supported",
+                    ));
+                }
+            }
+        }
+
+        obj_ty.sort_by(|a, b| a.0.cmp(&b.0));
+
+        return Ok((
+            Expr::Object { props: obj_expr },
+            Type::LiteralObject(obj_ty.into()),
+        ));
     }
 
-    pub fn translate_array_pat_assign(&mut self, pat: &swc::ArrayPat, op: swc::AssignOp, value: Expr) -> Result<(Expr, Type)>{
-        todo!()
+    pub fn translate_array_pat_assign(
+        &mut self,
+        pat: &swc::ArrayPat,
+        value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
+        if pat.optional {
+            if value_ty == Type::Undefined {
+                return Ok((Expr::Undefined, Type::Undefined));
+            }
+        }
+        if let Some(ann) = &pat.type_ann{
+            return Err(Error::syntax_error(ann.span, "type annotation not allowed"))
+        }
+
+        let mut exprs = Vec::new();
+        let mut tys = Vec::new();
+
+        let mut obj = Expr::Push(Box::new(value));
+
+        for i in 0..pat.elems.len() {
+            let is_first = i == 0;
+            let is_last = i == pat.elems.len() - 1;
+
+            // translate the required assignment expression for the element
+            let (expr, ty) = if let Some(elem) = &pat.elems[i] {
+                // check if the target value has index property
+                if let Some(value_ty) =
+                    self.type_has_property(&value_ty, &PropName::Int(i as _), false)
+                {
+                    // get the object from stack
+                    let obj = if is_first {
+                        let o = obj;
+                        obj = Expr::ReadStack;
+                        o
+                    } else if is_last {
+                        // pop from stack
+                        Expr::Pop
+                    } else {
+                        // read from stack
+                        Expr::ReadStack
+                    };
+
+                    // translate pattern assignment of element
+                    let (expr, value_ty) = self.translate_pat_assign(
+                        elem,
+                        swc::AssignOp::Assign,
+                        Expr::Member {
+                            // the object
+                            object: Box::new(obj),
+                            // the index
+                            key: PropNameOrExpr::PropName(PropName::Int(i as _)),
+                            // not optional
+                            optional: false,
+                        },
+                        value_ty,
+                    )?;
+
+                    // return the assignment expression and type
+                    (expr, value_ty)
+                } else {
+                    // no index property is found, check if assignment is optional
+                    let is_optional = match elem {
+                        swc::Pat::Array(a) => a.optional,
+                        // todo: assign pattern
+                        swc::Pat::Assign(a) => {
+                            return Err(Error::syntax_error(
+                                a.span,
+                                "assignment pattern not supported",
+                            ))
+                        }
+                        // expr pattern is only valid in for in loops
+                        swc::Pat::Expr(_) => unreachable!(),
+                        swc::Pat::Ident(id) => id.optional,
+                        swc::Pat::Invalid(i) => {
+                            return Err(Error::syntax_error(
+                                i.span,
+                                "invalid left-hand side assignment",
+                            ))
+                        }
+                        swc::Pat::Object(o) => o.optional,
+                        // todo: rest assignment
+                        swc::Pat::Rest(r) => {
+                            return Err(Error::syntax_error(
+                                r.dot3_token,
+                                "rest assignment not supported",
+                            ))
+                        }
+                    };
+
+                    // return undefined if optional
+                    if is_optional {
+                        (Expr::Undefined, Type::Undefined)
+                    } else {
+                        // has no property and not optional, return error
+                        return Err(Error::syntax_error(
+                            elem.span(),
+                            format!("type '' has no property '{}'", i),
+                        ));
+                    }
+                }
+            } else {
+                // there is no assignment in this index, return undefined
+                (Expr::Undefined, Type::Undefined)
+            };
+
+            // push to array type construction
+            tys.push(ty);
+            // push expression to array
+            exprs.push(expr);
+        }
+
+        return Ok((Expr::Array { values: exprs }, Type::Tuple(tys.into_boxed_slice())));
+    }
+
+    pub fn translate_pat_assign(
+        &mut self,
+        pat: &swc::Pat,
+        op: swc::AssignOp,
+        value: Expr,
+        value_ty: Type,
+    ) -> Result<(Expr, Type)> {
+        match pat {
+            swc::Pat::Array(a) => self.translate_array_pat_assign(a, value, value_ty),
+            swc::Pat::Object(o) => self.translate_object_pat_assign(o, value, value_ty),
+            // todo: assignment pattern
+            swc::Pat::Assign(a) => {
+                return Err(Error::syntax_error(
+                    a.span,
+                    "assignment pattern not supported",
+                ))
+            }
+            // expr pattern is only valid in for-in loops
+            swc::Pat::Expr(_) => unreachable!(),
+            swc::Pat::Ident(id) => {
+                self.translate_var_assign(pat.span(), &id.id, op, value, value_ty)
+            }
+            swc::Pat::Invalid(i) => {
+                return Err(Error::syntax_error(
+                    i.span,
+                    "invalid left-hand side assignment",
+                ))
+            }
+            // todo: rest assignment
+            swc::Pat::Rest(r) => {
+                return Err(Error::syntax_error(
+                    r.dot3_token,
+                    "rest assignment is not supported",
+                ))
+            }
+        }
     }
 
     pub fn translate_bin(&mut self, b: &swc::BinExpr) -> Result<(Expr, Type)> {
@@ -511,6 +873,36 @@ impl Transformer {
         let (mut left, mut left_ty) = self.translate_expr(&b.left, None)?;
         let (mut right, mut right_ty) = self.translate_expr(&b.right, None)?;
 
+        if let Type::LiteralInt(_) = left_ty {
+            left_ty = Type::Int;
+        }
+        if let Type::LiteralInt(_) = right_ty {
+            right_ty = Type::Int;
+        }
+        if let Type::LiteralNumber(_) = left_ty {
+            left_ty = Type::Number;
+        }
+        if let Type::LiteralNumber(_) = right_ty {
+            right_ty = Type::Number;
+        }
+        if let Type::LiteralBigint(_) = left_ty {
+            left_ty = Type::Bigint;
+        }
+        if let Type::LiteralBigint(_) = right_ty {
+            right_ty = Type::Bigint;
+        }
+        if let Type::LiteralBool(_) = left_ty {
+            left_ty = Type::Bool;
+        }
+        if let Type::LiteralBool(_) = right_ty {
+            right_ty = Type::Bool;
+        }
+        if let Type::LiteralString(_) = left_ty {
+            left_ty = Type::String;
+        }
+        if let Type::LiteralString(_) = right_ty {
+            right_ty = Type::String;
+        }
         let ty;
 
         match b.op {
@@ -577,19 +969,19 @@ impl Transformer {
             }
             swc::BinaryOp::Gt | swc::BinaryOp::GtEq | swc::BinaryOp::Lt | swc::BinaryOp::LtEq => {
                 if left_ty == Type::Number && right_ty == Type::Number {
-                    ty = Type::Number;
+                    ty = Type::Bool;
                 } else if left_ty == Type::Int && right_ty == Type::Int {
-                    ty = Type::Int;
+                    ty = Type::Bool;
                 } else if left_ty == Type::Int && right_ty == Type::Number {
                     left_ty = Type::Number;
                     left = Expr::Cast(Box::new(left), Type::Number);
-                    ty = Type::Number;
+                    ty = Type::Bool;
                 } else if left_ty == Type::Number && right_ty == Type::Int {
                     right_ty = Type::Number;
                     right = Expr::Cast(Box::new(right), Type::Number);
-                    ty = Type::Number;
+                    ty = Type::Bool;
                 } else if left_ty == Type::Bigint && right_ty == Type::Bigint {
-                    ty = Type::Bigint;
+                    ty = Type::Bool;
                 } else {
                     return Err(Error::syntax_error(b.span, format!("The operand of an arithmetic operation must be of type 'number' or 'bigint'")));
                 }
@@ -825,13 +1217,31 @@ impl Transformer {
                     ty.clone(),
                 ))
             }
+            Some(Binding::Function(f)) => {
+                // copy the id to avoid borrowing self
+                let id = *f;
+                // get the functio type
+                let ty = self
+                    .context
+                    .functions
+                    .get(&id)
+                    .expect("invalid function id")
+                    .ty();
+                // return expression
+                return Ok((Expr::Function(id), Type::Function(Box::new(ty))));
+            }
             None => {
                 return Err(Error::syntax_error(
                     ident.span,
                     format!("undefined identifier '{}'", ident.sym),
                 ))
             }
-            _ => return Err(Error::syntax_error(ident.span, "binding is not a variable")),
+            _ => {
+                return Err(Error::syntax_error(
+                    ident.span,
+                    format!("identifier '{}' is not a variable", ident.sym),
+                ))
+            }
         }
     }
 
@@ -890,8 +1300,8 @@ impl Transformer {
                             v.as_ref().clone(),
                         ));
                     }
-                    Type::Array(elem) => {
-                        if ty == Type::Int || ty == Type::Number {
+                    Type::Array(elem) => match ty {
+                        Type::Int | Type::LiteralInt(_) | Type::Number | Type::LiteralNumber(_) => {
                             return Ok((
                                 Expr::Member {
                                     object: Box::new(obj),
@@ -900,15 +1310,16 @@ impl Transformer {
                                 },
                                 elem.as_ref().clone(),
                             ));
-                        } else {
+                        }
+                        _ => {
                             return Err(Error::syntax_error(
                                 member.span,
                                 "array can only be indexed by number",
-                            ));
+                            ))
                         }
-                    }
-                    Type::Tuple(elems) => {
-                        if ty == Type::Int || ty == Type::Number {
+                    },
+                    Type::Tuple(elems) => match ty {
+                        Type::Int | Type::LiteralInt(_) | Type::Number | Type::LiteralNumber(_) => {
                             return Ok((
                                 Expr::Member {
                                     object: Box::new(obj),
@@ -917,13 +1328,14 @@ impl Transformer {
                                 },
                                 Type::Union(elems.clone()),
                             ));
-                        } else {
+                        }
+                        _ => {
                             return Err(Error::syntax_error(
                                 member.span,
                                 "tuple can only be indexed by number",
                             ));
                         }
-                    }
+                    },
                     _ => {
                         return Err(Error::syntax_error(
                             member.span,
@@ -956,44 +1368,65 @@ impl Transformer {
                 return Err(Error::syntax_error(u.span, "'delete' is not allowed"))
             }
             swc::UnaryOp::Minus | swc::UnaryOp::Plus => {
-                if ty == Type::Number || ty == Type::Int || ty == Type::Bigint || ty == Type::Bool {
-                    // return unary expression
-                    return Ok((
-                        Expr::Unary {
-                            op: if u.op == swc::UnaryOp::Minus {
-                                crate::ast::UnaryOp::Minus
-                            } else {
-                                crate::ast::UnaryOp::Plus
+                match ty {
+                    Type::Number
+                    | Type::LiteralNumber(_)
+                    | Type::Int
+                    | Type::LiteralInt(_)
+                    | Type::Bigint
+                    | Type::LiteralBigint(_) => {
+                        // return unary expression
+                        return Ok((
+                            Expr::Unary {
+                                op: if u.op == swc::UnaryOp::Minus {
+                                    crate::ast::UnaryOp::Minus
+                                } else {
+                                    crate::ast::UnaryOp::Plus
+                                },
+                                value: Box::new(expr),
                             },
-                            value: Box::new(expr),
-                        },
-                        match ty {
-                            Type::Int => Type::Int,
-                            Type::Bigint => Type::Bigint,
-                            _ => Type::Number,
-                        },
-                    ));
-                } else {
-                    return Err(Error::syntax_error(
-                        u.span,
-                        "right-hand side must be one of 'number', 'bigint' or 'boolean'",
-                    ));
+                            match ty {
+                                Type::Int => Type::Int,
+                                Type::Bigint => Type::Bigint,
+                                _ => Type::Number,
+                            },
+                        ));
+                    }
+                    _ => {
+                        return Err(Error::syntax_error(
+                            u.span,
+                            "right-hand side must be one of 'number', 'bigint' or 'boolean'",
+                        ))
+                    }
                 }
             }
             swc::UnaryOp::Tilde => {
-                // bitnot can only apply to number, bigint or bool
-                if ty != Type::Number && ty != Type::Int && ty != Type::Bigint && ty != Type::Bool {
-                    return Err(Error::syntax_error(
-                        u.span,
-                        "right-hand side must be one of 'number', 'bigint' or 'boolean'",
-                    ));
+                match ty {
+                    Type::Number => {}
+                    Type::Int => {}
+                    Type::LiteralNumber(_) => {}
+                    Type::LiteralInt(_) => {}
+                    Type::Bigint => {}
+                    Type::LiteralBigint(_) => {}
+                    Type::Bool => {}
+                    Type::LiteralBool(_) => {}
+                    _ => {
+                        return Err(Error::syntax_error(
+                            u.span,
+                            "right-hand side must be one of 'number', 'bigint' or 'boolean'",
+                        ));
+                    }
                 }
 
-                // convert to int if not
-                if ty != Type::Int {
-                    // cast type to int
+                if ty == Type::Number {
+                    expr = Expr::Cast(Box::new(expr), Type::Int)
+                }
+                if let Type::LiteralNumber(_) = ty {
                     expr = Expr::Cast(Box::new(expr), Type::Int);
-                };
+                }
+                if let Type::LiteralBigint(_) = ty {
+                    expr = Expr::Cast(Box::new(expr), Type::Bigint);
+                }
 
                 // return expression
                 return Ok((
@@ -1009,6 +1442,7 @@ impl Transformer {
                     Type::AnyObject
                     | Type::Null
                     | Type::Object(_)
+                    | Type::LiteralObject(_)
                     | Type::Regex
                     | Type::Array(_)
                     | Type::Function(_)
@@ -1016,10 +1450,14 @@ impl Transformer {
                     | Type::Promise(_)
                     | Type::Tuple(_)
                     | Type::Iterator(_) => "object",
-                    Type::Bigint => "bigint",
-                    Type::Bool => "boolean",
-                    Type::Enum(_) | Type::Int | Type::Number => "number",
-                    Type::String => "string",
+                    Type::Bigint | Type::LiteralBigint(_) => "bigint",
+                    Type::Bool | Type::LiteralBool(_) => "boolean",
+                    Type::Enum(_)
+                    | Type::Int
+                    | Type::Number
+                    | Type::LiteralInt(_)
+                    | Type::LiteralNumber(_) => "number",
+                    Type::String | Type::LiteralString(_) => "string",
                     Type::Symbol => "symbol",
                     Type::Undefined => "undefined",
                     // these type cannot be known at compile time
@@ -1075,11 +1513,19 @@ impl Transformer {
             }
         };
 
-        if ty != Type::Int && ty != Type::Number && ty != Type::Bigint {
-            return Err(Error::syntax_error(
-                u.span,
-                "operand must have type 'number' or 'bigint'",
-            ));
+        match ty {
+            Type::Int
+            | Type::LiteralInt(_)
+            | Type::Number
+            | Type::LiteralNumber(_)
+            | Type::Bigint
+            | Type::LiteralBigint(_) => {}
+            _ => {
+                return Err(Error::syntax_error(
+                    u.span,
+                    "operand must have type 'number' or 'bigint'",
+                ))
+            }
         }
 
         match expr {
@@ -1338,11 +1784,11 @@ impl Transformer {
         expected_ty: Option<&Type>,
     ) -> Result<(Expr, Type)> {
         match lit {
-            swc::Lit::BigInt(b) => Ok((
-                Expr::Bigint(b.value.to_i128().expect("i128 overflow")),
-                Type::Bigint,
-            )),
-            swc::Lit::Bool(b) => Ok((Expr::Bool(b.value), Type::Bool)),
+            swc::Lit::BigInt(b) => {
+                let i = b.value.to_i128().expect("i128 overflow");
+                Ok((Expr::Bigint(i), Type::LiteralBigint(i)))
+            }
+            swc::Lit::Bool(b) => Ok((Expr::Bool(b.value), Type::LiteralBool(b.value))),
             swc::Lit::JSXText(_) => unimplemented!(),
             swc::Lit::Null(_) => Ok((Expr::Null, Type::Null)),
             swc::Lit::Num(n) => {
@@ -1350,12 +1796,16 @@ impl Transformer {
                     return Ok((Expr::Number(n.value), Type::Number));
                 }
                 if n.value.is_finite() && n.value as i32 as f64 == n.value {
-                    return Ok((Expr::Int(n.value as i32), Type::Int));
+                    return Ok((Expr::Int(n.value as i32), Type::LiteralInt(n.value as i32)));
                 }
 
-                return Ok((Expr::Number(n.value), Type::Number));
+                return Ok((Expr::Number(n.value), Type::LiteralNumber(n.value)));
             }
-            swc::Lit::Str(s) => Ok((Expr::String(s.value.to_string()), Type::String)),
+            swc::Lit::Str(s) => Ok((
+                Expr::String(s.value.to_string()),
+                Type::LiteralString(s.value.as_str().into()),
+            )),
+            // todo: regex
             swc::Lit::Regex(_r) => Ok((Expr::Regex(), Type::Regex)),
         }
     }
@@ -1691,6 +2141,6 @@ impl Transformer {
 
         let (expr, ty) = self.translate_expr(expr, None)?;
 
-        return Ok(PropNameOrExpr::Expr(Box::new(expr), ty))
+        return Ok(PropNameOrExpr::Expr(Box::new(expr), ty));
     }
 }

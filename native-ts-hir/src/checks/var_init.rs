@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{ast::*, common::VariableId};
 
@@ -7,7 +7,7 @@ struct VarDesc {
 }
 
 struct Scope {
-    variables: HashMap<VariableId, VarDesc>,
+    variables: HashSet<VariableId>,
 }
 
 pub struct Checker {
@@ -15,12 +15,12 @@ pub struct Checker {
 }
 
 impl Checker {
-    pub fn find(&self, id: VariableId) -> Option<&VarDesc> {
+    pub fn is_initialised(&self, id: VariableId) -> bool {
         for scope in self.scopes.iter().rev() {
-            if let Some(desc) = scope.variables.get(&id) {
-                return Some(desc);
+            if let Some(_) = scope.variables.get(&id) {
+                return true;
             }
         }
-        return None;
+        return false;
     }
 }
