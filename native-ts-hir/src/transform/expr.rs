@@ -192,7 +192,7 @@ impl Transformer {
             self.type_check(expr.span(), &ty, expected)?;
 
             if !ty.eq(expected) {
-                e = Expr::Cast(Box::new(e), expected.clone())
+                e = self.cast(e, &ty, expected.clone())
             }
 
             return Ok((e, expected.clone()));
@@ -229,7 +229,7 @@ impl Transformer {
                     self.type_check(span, &Type::Undefined, &expected_elem_ty)?;
 
                     if !expected_elem_ty.as_ref().eq(&ty) {
-                        expr = Expr::Cast(Box::new(expr), expected_elem_ty.as_ref().clone());
+                        expr = self.cast(expr, &ty, expected_elem_ty.as_ref().clone());
                     }
 
                     elements.push(expr);
@@ -624,7 +624,10 @@ impl Transformer {
                             ));
                         };
 
-                    let v = if is_first {
+                    let v = if is_first && is_last{
+                        // todo: avoid clone
+                        value.clone()
+                    } else if is_first {
                         // todo: avoid clone
                         Expr::Push(Box::new(value.clone()))
                     } else if is_last {
@@ -652,7 +655,10 @@ impl Transformer {
                         PropNameOrExpr::Expr(_, _) => unimplemented!(),
                     };
 
-                    let v = if is_first {
+                    let v = if is_first && is_last{
+                        // todo: avoid clone
+                        value.clone()
+                    } else if is_first {
                         // todo: avoid clone
                         Expr::Push(Box::new(value.clone()))
                     } else if is_last {
@@ -735,7 +741,14 @@ impl Transformer {
                     self.type_has_property(&value_ty, &PropName::Int(i as _), false)
                 {
                     // get the object from stack
-                    let obj = if is_first {
+                    let obj = if is_first && is_last{
+                        // get the expression directly
+                        if let Expr::Push(v) = core::mem::replace(&mut obj, Expr::Undefined){
+                            *v
+                        } else{
+                            unreachable!()
+                        }
+                    } else if is_first {
                         let o = obj;
                         obj = Expr::ReadStack;
                         o
@@ -865,6 +878,7 @@ impl Transformer {
             let prop = self.translate_computed_prop_name(&b.left)?;
             let (right, right_ty) = self.translate_expr(&b.right, None)?;
 
+            // translate the left hand side
             match prop {
                 PropNameOrExpr::PropName(prop) => {
                     if let Some(_) = self.type_has_property(&right_ty, &prop, false) {
@@ -880,7 +894,7 @@ impl Transformer {
                     }
                 }
                 PropNameOrExpr::Expr(..) => {
-                    // TODO
+                    // todo: computed prop name
                     return Err(Error::syntax_error(
                         b.span,
                         "computed property name 'in' operation not supported",

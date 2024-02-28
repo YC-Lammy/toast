@@ -5,8 +5,7 @@ use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::ast::{
-    EnumType, EnumVariantDesc, FuncType, InterfaceMethod, InterfacePropertyDesc, InterfaceType,
-    PropNameOrExpr, Type,
+    EnumType, EnumVariantDesc, Expr, FuncType, InterfaceMethod, InterfacePropertyDesc, InterfaceType, PropNameOrExpr, Type
 };
 use crate::common::{AliasId, ClassId, FunctionId, InterfaceId};
 use crate::{PropName, Symbol};
@@ -16,6 +15,88 @@ type Result<T> = std::result::Result<T, Error<Span>>;
 use super::{context::Binding, Transformer};
 
 impl Transformer {
+    pub fn cast(&mut self, expr:Expr, expr_ty: &Type, ty:Type) -> Expr{
+        if expr_ty == &ty{
+            return expr
+        }
+        if let Type::LiteralInt(_) = expr_ty{
+            if ty == Type::Int{
+                return expr
+            }
+        }
+        if let Type::LiteralNumber(_) = expr_ty{
+            if ty == Type::Number{
+                return expr
+            }
+        }
+        if let Type::LiteralBool(_) = expr_ty{
+            if ty == Type::Bool{
+                return expr
+            }
+        }
+        if let Type::LiteralBigint(_) = expr_ty{
+            if ty == Type::Bigint{
+                return expr
+            }
+        }
+        if let Type::LiteralString(_) = expr_ty{
+            if ty == Type::String{
+                return expr
+            }
+        }
+
+        match &expr{
+            Expr::Int(i) => match &ty{
+                Type::Number => return Expr::Number(*i as f64),
+                Type::Bool => return Expr::Bool(*i != 0),
+                Type::String => return Expr::String(i.to_string()),
+                _ => {}
+            }
+            Expr::Bigint(i) => match &ty{
+                Type::Bool => return Expr::Bool(*i != 0),
+                Type::String => return Expr::String(i.to_string()),
+                _ => {}
+            }
+            Expr::Bool(b) => match &ty{
+                Type::Number => return Expr::Number(if *b{1.0}else{0.0}),
+                Type::Bigint => return Expr::Bigint(if *b{1}else{0}),
+                Type::Int => return Expr::Int(if *b{1}else{0}),
+                Type::String => return Expr::String(b.to_string()),
+                _ => {}
+            }
+            Expr::Number(n) => match &ty{
+                Type::Int => return Expr::Int(*n as i32),
+                Type::Bigint => return Expr::Bigint(*n as i128),
+                Type::Bool => return Expr::Bool(!n.is_nan() && *n != 0.0),
+                Type::String => return Expr::String(n.to_string()),
+                _ => {}
+            }
+            Expr::String(s) => match &ty{
+                Type::Bool => return Expr::Bool(!s.is_empty()),
+                _ => {}
+            }
+            Expr::Undefined => match &ty{
+                Type::Int => return Expr::Int(0),
+                Type::Number => return Expr::Number(0.0),
+                Type::Bigint => return Expr::Bigint(0),
+                Type::Bool => return Expr::Bool(false),
+                Type::String => return Expr::String("undefined".to_string()),
+                _ => {}
+            }
+            Expr::Null => match &ty{
+                Type::Int => return Expr::Int(0),
+                Type::Number => return Expr::Number(0.0),
+                Type::Bigint => return Expr::Bigint(0),
+                Type::Bool => return Expr::Bool(false),
+                Type::String => return Expr::String("null".to_string()),
+                _ => {}
+            }
+            _ => {}
+        }
+
+        return Expr::Cast(Box::new(expr), ty)
+    }
+
     /// translate a function type without translating its contents
     pub fn translate_function_ty(&mut self, func: &swc::Function) -> Result<FuncType> {
         // generic function
