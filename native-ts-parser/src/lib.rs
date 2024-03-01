@@ -318,3 +318,121 @@ impl Parser {
         return false;
     }
 }
+
+#[cfg(test)]
+macro_rules! test_case {
+    ($($id:expr => ($($dep:expr),*)),*) => {
+        // construct Parser
+        {let mut case = Parser{
+            src: Default::default(),
+            modules: Default::default()
+        };
+        $(
+            // insert id to hashmap
+            case.modules.insert(
+                // module id
+                ModuleId($id),
+                // a dummy module
+                ParsedModule{
+                    // Path is same as module id
+                    path: PathBuf::from(stringify!($id)),
+                    // the module id
+                    id: ModuleId($id),
+                    // add the dependencies
+                    dependencies: vec![$(ModuleId($dep)),*],
+                    // dummy ast
+                    module: swc_core::ecma::ast::Module{
+                        span: Default::default(),
+                        body: Vec::new(),
+                        shebang: None
+                    }
+                }
+            );
+        )*
+        case}
+    };
+}
+
+#[test]
+fn test1(){
+    let test_case = test_case!(
+        0 => (1, 2, 3),
+        1 => (5),
+        2 => (3, 4, 5),
+        3 => (4, 5),
+        4 => (),
+        5 => ()
+    );
+    test_case.check_cyclic_dependency().expect("test failed");
+}
+
+#[test]
+fn test2(){
+    let test_case = test_case!(
+        0 => (1, 2),
+        1 => (2),
+        2 => (0, 1)
+    );
+    test_case.check_cyclic_dependency().expect_err("test failed");
+}
+
+#[test]
+fn test3(){
+    let test_case = test_case!(
+        0 => (1, 2),
+        1 => (2),
+        2 => (3, 4),
+        3 => (1),
+        4 => ()
+    );
+    test_case.check_cyclic_dependency().expect_err("test failed");
+}
+
+#[test]
+fn test4(){
+    let test_case = test_case!(
+        0 => (4, 2),
+        1 => (2),
+        2 => (3, 4),
+        3 => (1),
+        4 => ()
+    );
+    test_case.check_cyclic_dependency().expect_err("test failed");
+}
+
+#[test]
+fn test5(){
+    let test_case = test_case!(
+        0 => (),
+        1 => (),
+        2 => (3),
+        3 => (2)
+    );
+    test_case.check_cyclic_dependency().expect_err("test failed");
+}
+
+#[test]
+fn test6(){
+    let test_case = test_case!(
+        0 => (2, 3, 4, 5),
+        1 => (),
+        2 => (),
+        3 => (),
+        4 => (3, 2),
+        5 => (3, 2)
+    );
+    test_case.check_cyclic_dependency().expect("test failed");
+}
+
+#[test]
+fn test7(){
+    let test_case = test_case!(
+        0 => (4, 5),
+        1 => (2),
+        2 => (),
+        3 => (1),
+        4 => (2, 5),
+        5 => (1, 3)
+    );
+    test_case.check_cyclic_dependency().expect("test failed");
+}
