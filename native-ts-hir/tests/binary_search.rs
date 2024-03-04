@@ -1,16 +1,29 @@
+use std::collections::HashMap;
+
 use native_ts_hir::ast::format::Formatter;
+use native_ts_hir::ast::Program;
+use native_ts_hir::interpreter::Interpreter;
 use native_ts_hir::transform::Transformer;
 
 #[test]
 fn binary_search() {
-    let s = "binarySearch([], 0);
+    let s = "binarySearch([0, 8, 9, 10, 11, 12, 13, 14], 12);
+    function round(i: number): number{
+        let rem = i % 1;
+        let n = i - rem;
+
+        if (rem >= 0.5){
+            return n + 1
+        }
+        return n
+    }
     function binarySearch(arr: number[], x: number): number
-    {    
+    {
         let l = 0;
         let r = arr.length - 1;
         let mid: number;
         while (r >= l) {
-             mid = l + (r - l) / 2;
+             mid = l + round((r - l) / 2);
       
             // If the element is present at the middle
             // itself
@@ -38,14 +51,27 @@ fn binary_search() {
         .parse_str("test".to_string(), s.to_string())
         .expect("parse failed");
 
-    for (_id, module) in m.modules {
+    for (id, module) in m.modules {
         let mut t = Transformer::new();
 
-        let re = t.transform_module(&module.module).expect("parse error");
+        let re = t
+            .transform_module(&module.module, vec![])
+            .expect("parse error");
         let mut formatter = Formatter::new(&re.table);
         formatter.format_module(&re);
 
         let formated = formatter.emit_string();
         println!("{}", formated);
+
+        let intpr = Interpreter::new();
+
+        let id = unsafe { core::mem::transmute(id) };
+
+        let re = intpr.run(&Program {
+            entry: id,
+            modules: HashMap::from_iter([(id, re)]),
+        });
+
+        println!("{:#?}", re);
     }
 }

@@ -2,6 +2,7 @@ use crate::common::{ClassId, FunctionId, InterfaceId, VariableId};
 
 use super::{Expr, Type};
 
+#[derive(Debug, Clone)]
 pub enum Stmt {
     /// declares a class type
     DeclareClass(ClassId),
@@ -20,11 +21,15 @@ pub enum Stmt {
     /// indicate variable is out of scope
     DropVar(VariableId),
     /// start of a block
-    Block { label: String },
+    Block {
+        label: String,
+    },
     /// end of a block
     EndBlock,
     /// jump if condition
-    If { test: Box<Expr> },
+    If {
+        test: Box<Expr>,
+    },
     /// end if
     EndIf,
     /// else, must be after end if
@@ -44,7 +49,9 @@ pub enum Stmt {
     /// end of a switch
     EndSwitch,
     /// a loop
-    Loop { label: Option<String> },
+    Loop {
+        label: Option<String>,
+    },
     /// end of loop
     EndLoop,
 
@@ -57,7 +64,7 @@ pub enum Stmt {
 
     /// break from a loop
     Break(Option<String>),
-    /// 
+    ///
     Continue(Option<String>),
 
     Return(Box<Expr>),

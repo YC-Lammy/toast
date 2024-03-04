@@ -13,13 +13,13 @@ use std::{
 
 use context::*;
 
-use native_js_common::error::Error;
-use native_ts_parser::swc_core::common::Span;
+use native_ts_common::error::Error;
 use native_ts_parser::swc_core::ecma::ast as swc;
+use native_ts_parser::{swc_core::common::Span, ParsedProgram};
 
 use crate::{
     ast::{self, Expr, Function, FunctionParam, ModuleExport, Stmt, Type},
-    common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, VariableId},
+    common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId},
     symbol_table::SymbolTable,
     PropName,
 };
@@ -64,15 +64,38 @@ impl Transformer {
             is_in_constructor: false,
         }
     }
-    pub fn anonymous_name(&self) -> String {
+    pub(crate) fn anonymous_name(&self) -> String {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        let mut buf = native_js_common::itoa::Buffer::new();
+        let mut buf = native_ts_common::itoa::Buffer::new();
 
         return "anonymous".to_string() + buf.format(COUNT.fetch_add(1, Ordering::SeqCst));
     }
 
-    pub fn transform_module(&mut self, module: &swc::Module) -> Result<crate::ast::Module> {
+    pub fn transform_program(&mut self, program: &ParsedProgram) -> Result<crate::ast::Program> {
+        let mut parsed_modules = HashMap::new();
+        for (id, m) in &program.modules {
+            let parsed_module = self.transform_module(&m.module, unsafe {
+                core::mem::transmute(m.dependencies.to_vec())
+            })?;
+
+            parsed_modules.insert(*id, parsed_module);
+        }
+
+        todo!()
+        //return Ok(crate::ast::Program{
+        //    entry: {todo!()},
+        //    modules: parsed_modules
+        //})
+    }
+
+    fn transform_module_with_dependencies(&mut self) {}
+
+    pub fn transform_module(
+        &mut self,
+        module: &swc::Module,
+        dependencies: Vec<ModuleId>,
+    ) -> Result<crate::ast::Module> {
         let mut export_default = ModuleExport::Undefined;
         let mut module_exports = HashMap::new();
 
@@ -83,7 +106,10 @@ impl Transformer {
                         self.hoist_class(c.ident.as_ref().map(|id| id.sym.as_ref()), &c.class)
                     }
                     swc::DefaultDecl::Fn(f) => {
-                        self.hoist_function(f.ident.as_ref().map(|id| id.sym.as_ref()), &f.function)?;
+                        self.hoist_function(
+                            f.ident.as_ref().map(|id| id.sym.as_ref()),
+                            &f.function,
+                        )?;
                         Ok(())
                     }
                     swc::DefaultDecl::TsInterfaceDecl(i) => {
@@ -159,11 +185,14 @@ impl Transformer {
                             .func()
                             .stmts
                             .push(Stmt::DeclareVar(varid, ty.clone()));
-                        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                            op: crate::ast::AssignOp::Assign,
-                            variable: varid,
-                            value: Box::new(expr),
-                        })));
+                        self.context
+                            .func()
+                            .stmts
+                            .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                op: crate::ast::AssignOp::Assign,
+                                variable: varid,
+                                value: Box::new(expr),
+                            })));
 
                         export_default = ModuleExport::Var(varid, ty);
                     }
@@ -310,6 +339,7 @@ impl Transformer {
             main_function: main,
             default_export: export_default,
             exports: module_exports,
+            dependencies: dependencies,
         });
     }
 
@@ -424,8 +454,8 @@ impl Transformer {
         }
 
         // hoist functions
-        for decl in stmts{
-            if let swc::Decl::Fn(f) = decl{
+        for decl in stmts {
+            if let swc::Decl::Fn(f) = decl {
                 self.hoist_function(Some(&f.ident.sym), &f.function)?;
             }
         }
@@ -450,28 +480,24 @@ impl Transformer {
         return Ok(());
     }
 
-    pub fn hoist_function(&mut self, name: Option<&str>, func: &swc::Function) -> Result<FunctionId> {
+    pub fn hoist_function(
+        &mut self,
+        name: Option<&str>,
+        func: &swc::Function,
+    ) -> Result<FunctionId> {
         let id = FunctionId::new();
         if func.type_params.is_some() {
-            if let Some(name) = name{
-                if !self
-                    .context
-                    .declare(name, Binding::GenericFunction(id))
-                {
+            if let Some(name) = name {
+                if !self.context.declare(name, Binding::GenericFunction(id)) {
                     return Err(Error::syntax_error(func.span, "duplicated identifier"));
                 }
             }
-            
         } else {
-            if let Some(name) = name{
-                if !self
-                    .context
-                    .declare(name, Binding::Function(id))
-                {
+            if let Some(name) = name {
+                if !self.context.declare(name, Binding::Function(id)) {
                     return Err(Error::syntax_error(func.span, "duplicated identifier"));
                 }
             }
-            
 
             let f = self.translate_function_ty(func)?;
 
@@ -479,6 +505,8 @@ impl Transformer {
             self.context.functions.insert(
                 id,
                 Function {
+                    is_async: func.is_async,
+                    is_generator: func.is_generator,
                     this_ty: f.this_ty,
                     params: f
                         .params

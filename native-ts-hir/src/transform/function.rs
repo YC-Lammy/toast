@@ -1,4 +1,4 @@
-use native_js_common::error::Error;
+use native_ts_common::error::Error;
 use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
@@ -52,7 +52,8 @@ impl Transformer {
             None => None,
         };
 
-        self.context.new_function(id);
+        self.context
+            .new_function(id, func.is_async, func.is_generator);
 
         match func.body.as_ref() {
             swc::BlockStmtOrExpr::Expr(e) => {
@@ -72,10 +73,13 @@ impl Transformer {
                 }
 
                 if need_cast {
-                    self.context.func().stmts.push(Stmt::Return(Box::new(Expr::Cast(
-                        Box::new(expr),
-                        expected.unwrap().return_ty.clone(),
-                    ))))
+                    self.context
+                        .func()
+                        .stmts
+                        .push(Stmt::Return(Box::new(Expr::Cast(
+                            Box::new(expr),
+                            expected.unwrap().return_ty.clone(),
+                        ))))
                 } else {
                     // simply return
                     self.context.func().stmts.push(Stmt::Return(Box::new(expr)));
@@ -109,7 +113,8 @@ impl Transformer {
         class_this_ty: Option<Type>,
         func: &swc::Function,
     ) -> Result<()> {
-        self.context.new_function(id);
+        self.context
+            .new_function(id, func.is_async, func.is_generator);
 
         let mut this_ty = Type::Any;
 

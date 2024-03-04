@@ -374,7 +374,7 @@ impl<'a> Formatter<'a> {
 
     fn write_var(&mut self, id: VariableId) {
         self.write_str("var");
-        let mut buf = native_js_common::itoa::Buffer::new();
+        let mut buf = native_ts_common::itoa::Buffer::new();
         self.write_str(buf.format(id.0));
     }
 

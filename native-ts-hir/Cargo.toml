@@ -6,9 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-native-js-common = {path="../native-js-common"}
+native-ts-common = {path="../native-ts-common"}
 native-ts-parser = {path = "../native-ts-parser"}
 
 itoa = "1"
 num-traits = "*"
 itertools = "*"
+parking_lot = "*"

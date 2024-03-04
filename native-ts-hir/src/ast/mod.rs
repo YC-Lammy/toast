@@ -47,4 +47,11 @@ pub struct Module {
     pub default_export: ModuleExport,
     /// named exports
     pub exports: HashMap<PropName, ModuleExport>,
+    /// dependencies
+    pub dependencies: Vec<ModuleId>,
+}
+
+pub struct Program {
+    pub entry: ModuleId,
+    pub modules: HashMap<ModuleId, Module>,
 }

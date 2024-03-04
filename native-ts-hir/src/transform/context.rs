@@ -102,6 +102,8 @@ impl Context {
         s.functions.insert(
             function_id,
             Function {
+                is_async: false,
+                is_generator: false,
                 this_ty: Type::Any,
                 params: Vec::new(),
                 return_ty: Type::Undefined,
@@ -113,7 +115,7 @@ impl Context {
         return s;
     }
 
-    pub fn new_function(&mut self, id: FunctionId) {
+    pub fn new_function(&mut self, id: FunctionId, is_async: bool, is_generaor: bool) {
         self.scopes.push(Scope {
             function_id: id,
             bindings: HashMap::new(),
@@ -123,6 +125,8 @@ impl Context {
             self.functions.insert(
                 id,
                 Function {
+                    is_async: is_async,
+                    is_generator: is_generaor,
                     this_ty: Type::Any,
                     params: Vec::new(),
                     return_ty: Type::Undefined,
@@ -208,7 +212,6 @@ impl Context {
                 VariableDesc {
                     ty: ty,
                     is_heap: false,
-                    is_captured: false,
                 },
             );
     }
@@ -257,7 +260,6 @@ impl Context {
                     VariableDesc {
                         ty: ty,
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
             }

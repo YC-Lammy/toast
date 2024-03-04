@@ -8,7 +8,6 @@ use super::{Stmt, Type};
 pub struct VariableDesc {
     pub ty: Type,
     pub is_heap: bool,
-    pub is_captured: bool,
 }
 
 pub struct FunctionParam {
@@ -17,6 +16,8 @@ pub struct FunctionParam {
 }
 
 pub struct Function {
+    pub is_async: bool,
+    pub is_generator: bool,
     pub this_ty: Type,
     pub params: Vec<FunctionParam>,
     pub return_ty: Type,

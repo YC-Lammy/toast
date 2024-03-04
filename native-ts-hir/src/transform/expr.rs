@@ -1,4 +1,4 @@
-use native_js_common::error::Error;
+use native_ts_common::error::Error;
 
 use num_traits::ToPrimitive;
 
@@ -75,7 +75,7 @@ impl Transformer {
                 return Err(Error::syntax_error(
                     c.span(),
                     "class expression not allowed",
-                ))
+                ));
             }
             // conditional expression
             swc::Expr::Cond(cond) => self.translate_cond(cond)?,
@@ -95,9 +95,7 @@ impl Transformer {
             }
             swc::Expr::Ident(id) => self.translate_var_load(id)?,
             swc::Expr::This(_) => (Expr::This, self.this_ty.clone()),
-            swc::Expr::Object(o) => {
-                return Err(Error::syntax_error(o.span, "object literal not allowed"))
-            }
+            swc::Expr::Object(o) => self.translate_object_lit(o, expected_ty)?,
             swc::Expr::Unary(u) => self.translate_unary_expr(u)?,
             swc::Expr::Update(u) => self.translate_update_expr(u)?,
             swc::Expr::Member(m) => self.translate_member(m)?,
@@ -192,7 +190,7 @@ impl Transformer {
             self.type_check(expr.span(), &ty, expected)?;
 
             if !ty.eq(expected) {
-                e = self.cast(e, &ty, expected.clone())
+                e = self.cast(e, &ty, expected)
             }
 
             return Ok((e, expected.clone()));
@@ -226,10 +224,10 @@ impl Transformer {
                         (a.span, Expr::Undefined, Type::Undefined)
                     };
 
-                    self.type_check(span, &Type::Undefined, &expected_elem_ty)?;
+                    self.type_check(span, &ty, &expected_elem_ty)?;
 
                     if !expected_elem_ty.as_ref().eq(&ty) {
-                        expr = self.cast(expr, &ty, expected_elem_ty.as_ref().clone());
+                        expr = self.cast(expr, &ty, expected_elem_ty);
                     }
 
                     elements.push(expr);
@@ -300,11 +298,23 @@ impl Transformer {
                         (Expr::Undefined, Type::Undefined)
                     };
 
-                    // cannot be int, must be casted to number
-                    if t == Type::Int {
-                        t = Type::Number;
-                        expr = Expr::Cast(Box::new(expr), Type::Number);
-                    }
+                    match t {
+                        Type::Int | Type::LiteralInt(_) => {
+                            t = Type::Number;
+                            expr = Expr::Cast(Box::new(expr), Type::Number);
+                        }
+                        Type::LiteralNumber(_) => {
+                            t = Type::Number;
+                        }
+                        Type::LiteralBigint(_) => {
+                            t = Type::Bigint;
+                        }
+                        Type::LiteralBool(_) => {
+                            t = Type::Bool;
+                        }
+                        Type::LiteralString(_) => t = Type::String,
+                        _ => {}
+                    };
 
                     if let Some(chained) = ty {
                         ty = Some(chained.union(t));
@@ -500,7 +510,7 @@ impl Transformer {
         self.type_check(var.span, &value_ty, &var_ty)?;
 
         if value_ty != var_ty {
-            value = Expr::Cast(Box::new(value), var_ty.clone());
+            value = self.cast(value, &value_ty, &var_ty);
         };
 
         // check if operand type is valid for assignment
@@ -610,7 +620,7 @@ impl Transformer {
                     }
                     // type annotation not allowed
                     if let Some(ann) = &a.key.type_ann {
-                        return Err(Error::syntax_error(ann.span, "type annotation not allowed"))
+                        return Err(Error::syntax_error(ann.span, "type annotation not allowed"));
                     }
 
                     // value type of property
@@ -624,7 +634,7 @@ impl Transformer {
                             ));
                         };
 
-                    let v = if is_first && is_last{
+                    let v = if is_first && is_last {
                         // todo: avoid clone
                         value.clone()
                     } else if is_first {
@@ -642,8 +652,13 @@ impl Transformer {
                         optional: false,
                     };
 
-                    let (assign_expr, assign_ty) =
-                        self.translate_var_assign(a.span, &a.key.id, swc::AssignOp::Assign, v, value_ty)?;
+                    let (assign_expr, assign_ty) = self.translate_var_assign(
+                        a.span,
+                        &a.key.id,
+                        swc::AssignOp::Assign,
+                        v,
+                        value_ty,
+                    )?;
 
                     obj_expr.push((prop.clone(), assign_expr));
                     obj_ty.push((prop, assign_ty));
@@ -655,7 +670,7 @@ impl Transformer {
                         PropNameOrExpr::Expr(_, _) => unimplemented!(),
                     };
 
-                    let v = if is_first && is_last{
+                    let v = if is_first && is_last {
                         // todo: avoid clone
                         value.clone()
                     } else if is_first {
@@ -684,7 +699,6 @@ impl Transformer {
 
                         obj_expr.push((key.clone(), expr));
                         obj_ty.push((key, assign_ty))
-                        
                     } else {
                         return Err(Error::syntax_error(
                             k.key.span(),
@@ -721,8 +735,8 @@ impl Transformer {
                 return Ok((Expr::Undefined, Type::Undefined));
             }
         }
-        if let Some(ann) = &pat.type_ann{
-            return Err(Error::syntax_error(ann.span, "type annotation not allowed"))
+        if let Some(ann) = &pat.type_ann {
+            return Err(Error::syntax_error(ann.span, "type annotation not allowed"));
         }
 
         let mut exprs = Vec::new();
@@ -741,11 +755,11 @@ impl Transformer {
                     self.type_has_property(&value_ty, &PropName::Int(i as _), false)
                 {
                     // get the object from stack
-                    let obj = if is_first && is_last{
+                    let obj = if is_first && is_last {
                         // get the expression directly
-                        if let Expr::Push(v) = core::mem::replace(&mut obj, Expr::Undefined){
+                        if let Expr::Push(v) = core::mem::replace(&mut obj, Expr::Undefined) {
                             *v
-                        } else{
+                        } else {
                             unreachable!()
                         }
                     } else if is_first {
@@ -829,7 +843,10 @@ impl Transformer {
             exprs.push(expr);
         }
 
-        return Ok((Expr::Array { values: exprs }, Type::Tuple(tys.into_boxed_slice())));
+        return Ok((
+            Expr::Array { values: exprs },
+            Type::Tuple(tys.into_boxed_slice()),
+        ));
     }
 
     pub fn translate_pat_assign(
@@ -948,7 +965,6 @@ impl Transformer {
         match b.op {
             swc::BinaryOp::Add
             | swc::BinaryOp::Sub
-            | swc::BinaryOp::Div
             | swc::BinaryOp::Mul
             | swc::BinaryOp::Mod
             | swc::BinaryOp::Exp => {
@@ -986,7 +1002,51 @@ impl Transformer {
 
                 // right should be equal to left
                 debug_assert!(right_ty == left_ty);
-                debug_assert!(left_ty == Type::Int || left_ty == Type::Number || left_ty == Type::Bigint);
+                debug_assert!(
+                    left_ty == Type::Int || left_ty == Type::Number || left_ty == Type::Bigint
+                );
+            }
+            swc::BinaryOp::Div => {
+                // both are number
+                if left_ty == Type::Number && right_ty == Type::Number {
+                    ty = Type::Number;
+                } else if left_ty == Type::Int && right_ty == Type::Int {
+                    // integers must be casted into number in a division
+                    left = Expr::Cast(Box::new(left), Type::Number);
+                    right = Expr::Cast(Box::new(right), Type::Number);
+                    // both are int
+                    ty = Type::Number;
+                } else if left_ty == Type::Int && right_ty == Type::Number {
+                    // cast left hand side as number
+                    left_ty = Type::Number;
+                    left = Expr::Cast(Box::new(left), Type::Number);
+                    // result is number
+                    ty = Type::Number;
+                } else if left_ty == Type::Number && right_ty == Type::Int {
+                    // cast right hand side as number
+                    right_ty = Type::Number;
+                    right = Expr::Cast(Box::new(right), Type::Number);
+                    // result is number
+                    ty = Type::Number;
+                // both are bigint
+                } else if left_ty == Type::Bigint && right_ty == Type::Bigint {
+                    ty = Type::Bigint;
+                // both are string
+                } else if b.op == swc::BinaryOp::Add
+                    && left_ty == Type::String
+                    && right_ty == Type::String
+                {
+                    ty = Type::String
+                } else {
+                    // unsupported types
+                    return Err(Error::syntax_error(b.span, format!("The operand of an arithmetic operation must be of type 'number' or 'bigint'")));
+                }
+
+                // right should be equal to left
+                debug_assert!(right_ty == left_ty);
+                debug_assert!(
+                    left_ty == Type::Int || left_ty == Type::Number || left_ty == Type::Bigint
+                );
             }
             swc::BinaryOp::BitAnd
             | swc::BinaryOp::BitOr
@@ -1872,6 +1932,13 @@ impl Transformer {
             // todo: regex
             swc::Lit::Regex(_r) => Ok((Expr::Regex(), Type::Regex)),
         }
+    }
+
+    pub fn translate_object_lit(
+        &self,
+        obj: &swc::ObjectLit,
+        expected_ty: Option<&Type>,
+    ) -> Result<(Expr, Type)> {
     }
 
     pub fn translate_optchain(&mut self, n: &swc::OptChainExpr) -> Result<(Expr, Type)> {

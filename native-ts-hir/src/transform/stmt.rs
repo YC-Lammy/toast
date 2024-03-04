@@ -1,7 +1,8 @@
-use native_js_common::error::Error;
+use native_ts_common::error::Error;
 use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
+use crate::ast::UnaryOp;
 use crate::{
     ast::{Callee, Expr, PropNameOrExpr, Stmt, Type},
     common::VariableId,
@@ -173,44 +174,30 @@ impl Transformer {
         let mut ids = Vec::new();
 
         for d in &decl.decls {
-            let init = if let Some(init) = &d.init{
+            let init = if let Some(init) = &d.init {
                 Some(self.translate_expr(&init, None)?)
-            } else{
+            } else {
                 None
             };
-            
-            ids.extend_from_slice(
-                &self.translate_pat_var_decl(decl.kind, &d.name, init, None)?)
+
+            ids.extend_from_slice(&self.translate_pat_var_decl(decl.kind, &d.name, init, None)?)
         }
         return Ok(ids);
     }
 
-    fn translate_pat_var_decl(&mut self, kind: swc::VarDeclKind, pat: &swc::Pat, init: Option<(Expr, Type)>, parent_ann: Option<(Type, Span)>) -> Result<Vec<VariableId>>{
+    fn translate_pat_var_decl(
+        &mut self,
+        kind: swc::VarDeclKind,
+        pat: &swc::Pat,
+        init: Option<(Expr, Type)>,
+        parent_ann: Option<(Type, Span)>,
+    ) -> Result<Vec<VariableId>> {
         match pat {
-            swc::Pat::Ident(id) => {
-                Ok(vec![self.translate_ident_var_dec(
-                    kind,
-                    id,
-                    init,
-                    parent_ann
-                )?])
-            }
-            swc::Pat::Array(a) => {
-                self.translate_array_pat_decl(
-                    kind,
-                    a,
-                    init,
-                    parent_ann
-                )
-            }
-            swc::Pat::Object(obj) => {
-                self.tranlslate_object_pat_decl(
-                    kind,
-                    obj,
-                    init,
-                    parent_ann
-                )
-            }
+            swc::Pat::Ident(id) => Ok(vec![
+                self.translate_ident_var_dec(kind, id, init, parent_ann)?
+            ]),
+            swc::Pat::Array(a) => self.translate_array_pat_decl(kind, a, init, parent_ann),
+            swc::Pat::Object(obj) => self.tranlslate_object_pat_decl(kind, obj, init, parent_ann),
             swc::Pat::Assign(a) => {
                 return Err(Error::syntax_error(
                     a.span,
@@ -244,7 +231,7 @@ impl Transformer {
         kind: swc::VarDeclKind,
         ident: &swc::BindingIdent,
         init: Option<(Expr, Type)>,
-        parent_ann: Option<(Type, Span)>
+        parent_ann: Option<(Type, Span)>,
     ) -> Result<VariableId> {
         let varid = VariableId::new();
 
@@ -253,8 +240,8 @@ impl Transformer {
 
         if let Some(ann) = &ident.type_ann {
             ty = Some(self.translate_type(&ann.type_ann)?);
-        } else{
-            if let Some((ann, _)) = parent_ann{
+        } else {
+            if let Some((ann, _)) = parent_ann {
                 ty = Some(ann);
             }
         }
@@ -301,11 +288,14 @@ impl Transformer {
             .push(Stmt::DeclareVar(varid, ty.unwrap()));
 
         if let Some(init) = init_expr {
-            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                op: crate::ast::AssignOp::Assign,
-                variable: varid,
-                value: Box::new(init),
-            })));
+            self.context
+                .func()
+                .stmts
+                .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                    op: crate::ast::AssignOp::Assign,
+                    variable: varid,
+                    value: Box::new(init),
+                })));
         }
 
         return Ok(varid);
@@ -320,7 +310,10 @@ impl Transformer {
         parent_ann: Option<(Type, Span)>,
     ) -> Result<Vec<VariableId>> {
         if obj.optional {
-            return Err(Error::syntax_error(obj.span, "object pattern cannot be optional"))
+            return Err(Error::syntax_error(
+                obj.span,
+                "object pattern cannot be optional",
+            ));
         }
 
         todo!()
@@ -337,8 +330,11 @@ impl Transformer {
         // variable ids declared
         let mut ids = Vec::new();
         // todo: optional assignment
-        if pat.optional{
-            return Err(Error::syntax_error(pat.span, "array pattern cannot be optional"))
+        if pat.optional {
+            return Err(Error::syntax_error(
+                pat.span,
+                "array pattern cannot be optional",
+            ));
         }
         // translate type annotation
         let (ty_ann, ty_ann_span) = if let Some(ann) = pat.type_ann.as_ref() {
@@ -406,46 +402,58 @@ impl Transformer {
         };
 
         // push the initialiser to stack and get its type
-        let init_ty = if let Some((e, t)) = init{
+        let init_ty = if let Some((e, t)) = init {
             // push the initialiser to stack
-            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::Push(Box::new(e)))));
+            self.context
+                .func()
+                .stmts
+                .push(Stmt::Expr(Box::new(Expr::Push(Box::new(e)))));
             // return type
             Some(t)
-        } else{
+        } else {
             // no initialiser
             None
         };
 
-        for i in 0..pat.elems.len(){
+        for i in 0..pat.elems.len() {
             // get the type of element at index
-            let ann_prop_ty = match &ty_ann{
+            let ann_prop_ty = match &ty_ann {
                 Some(Type::Array(a)) => Some((a.as_ref().clone(), ty_ann_span.unwrap())),
                 Some(Type::Tuple(t)) => Some((t[i].clone(), ty_ann_span.unwrap())),
-                _ => None
+                _ => None,
             };
 
             // if some, a variable is declared, other wise, skip index
-            if let Some(p) = &pat.elems[i]{
+            if let Some(p) = &pat.elems[i] {
                 // an initialiser is present
-                if let Some(init_ty) = &init_ty{
+                if let Some(init_ty) = &init_ty {
                     // check if initialiser has index
-                    if let Some(prop_ty) = self.type_has_property(init_ty, &PropName::Int(i as _), false){
+                    if let Some(prop_ty) =
+                        self.type_has_property(init_ty, &PropName::Int(i as _), false)
+                    {
                         // construct member expression
-                        let member_expr = Expr::Member { 
-                            object: Box::new(Expr::ReadStack), 
-                            key: PropNameOrExpr::PropName(PropName::Int(i as _)), 
-                            optional: false 
+                        let member_expr = Expr::Member {
+                            object: Box::new(Expr::ReadStack),
+                            key: PropNameOrExpr::PropName(PropName::Int(i as _)),
+                            optional: false,
                         };
                         // translate pat variable declare
-                        let vs = self.translate_pat_var_decl(kind, p, Some((member_expr, prop_ty)), ann_prop_ty)?;
+                        let vs = self.translate_pat_var_decl(
+                            kind,
+                            p,
+                            Some((member_expr, prop_ty)),
+                            ann_prop_ty,
+                        )?;
                         // push ids
                         ids.extend_from_slice(&vs);
-
-                    } else{
+                    } else {
                         // the initialiser does not have index
-                        return Err(Error::syntax_error(p.span(), format!("type '' has no property '{}'", i)))
+                        return Err(Error::syntax_error(
+                            p.span(),
+                            format!("type '' has no property '{}'", i),
+                        ));
                     }
-                } else{
+                } else {
                     // no initialiser
                     let vs = self.translate_pat_var_decl(kind, p, None, ann_prop_ty)?;
                     // push ids
@@ -453,11 +461,14 @@ impl Transformer {
                 }
             };
         }
-        
-        // pop the initialiser from stack
-        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::Pop)));
 
-        return Ok(ids)
+        // pop the initialiser from stack
+        self.context
+            .func()
+            .stmts
+            .push(Stmt::Expr(Box::new(Expr::Pop)));
+
+        return Ok(ids);
     }
 
     pub fn translate_using_decl(&mut self, decl: &swc::UsingDecl) -> Result<Vec<VariableId>> {
@@ -505,11 +516,14 @@ impl Transformer {
                     .push(Stmt::DeclareVar(varid, ty.as_ref().unwrap().clone()));
 
                 if let Some(init) = init_expr {
-                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                        op: crate::ast::AssignOp::Assign,
-                        variable: varid,
-                        value: Box::new(init),
-                    })));
+                    self.context
+                        .func()
+                        .stmts
+                        .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            variable: varid,
+                            value: Box::new(init),
+                        })));
                 }
             } else {
                 return Err(Error::syntax_error(
@@ -541,7 +555,12 @@ impl Transformer {
         let (test, _ty) = self.translate_expr(&d.test, Some(&Type::Bool))?;
 
         let func = self.context.func();
-        func.stmts.push(Stmt::If { test: Box::new(test) });
+        func.stmts.push(Stmt::If {
+            test: Box::new(Expr::Unary {
+                op: UnaryOp::LogicalNot,
+                value: Box::new(test),
+            }),
+        });
         func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
         func.stmts.push(Stmt::EndIf);
 
@@ -579,7 +598,12 @@ impl Transformer {
         let (test, _ty) = self.translate_expr(&w.test, Some(&Type::Bool))?;
 
         let func = self.context.func();
-        func.stmts.push(Stmt::If { test: Box::new(test) });
+        func.stmts.push(Stmt::If {
+            test: Box::new(Expr::Unary {
+                op: UnaryOp::LogicalNot,
+                value: Box::new(test),
+            }),
+        });
         func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
         func.stmts.push(Stmt::EndIf);
 
@@ -701,18 +725,20 @@ impl Transformer {
             crate::ast::VariableDesc {
                 ty: Type::Int,
                 is_heap: false,
-                is_captured: false,
             },
         );
         self.context
             .func()
             .stmts
             .push(Stmt::DeclareVar(counter, Type::Int));
-        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-            op: crate::ast::AssignOp::Assign,
-            variable: counter,
-            value: Box::new(Expr::Int(0)),
-        })));
+        self.context
+            .func()
+            .stmts
+            .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                op: crate::ast::AssignOp::Assign,
+                variable: counter,
+                value: Box::new(Expr::Int(0)),
+            })));
 
         match &iterable_ty {
             Type::Tuple(_) | Type::Array(_) => {
@@ -722,7 +748,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: Type::Int,
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
                 // declare variable
@@ -731,15 +756,18 @@ impl Transformer {
                     .stmts
                     .push(Stmt::DeclareVar(iterator_var, Type::Int));
                 // assign array.length to iterator
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_var,
-                    value: Box::new(Expr::Member {
-                        object: Box::new(iterable_expr),
-                        key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
-                        optional: false,
-                    }),
-                })));
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_var,
+                        value: Box::new(Expr::Member {
+                            object: Box::new(iterable_expr),
+                            key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
+                            optional: false,
+                        }),
+                    })));
             }
             _ => {
                 let (iterator_ty, iterator_result_ty, _iterator_value_ty) =
@@ -751,7 +779,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: iterator_ty.clone(),
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
                 self.context.func().variables.insert(
@@ -759,7 +786,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: iterator_result_ty.clone(),
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
 
@@ -773,20 +799,23 @@ impl Transformer {
                     .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
 
                 // iterator = iterable[Symbol.iterator]();
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_var,
-                    value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member {
-                            object: iterable_expr,
-                            prop: PropNameOrExpr::PropName(PropName::Symbol(
-                                crate::Symbol::Iterator,
-                            )),
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_var,
+                        value: Box::new(Expr::Call {
+                            callee: Box::new(Callee::Member {
+                                object: iterable_expr,
+                                prop: PropNameOrExpr::PropName(PropName::Symbol(
+                                    crate::Symbol::Iterator,
+                                )),
+                            }),
+                            args: Vec::new(),
+                            optional: false,
                         }),
-                        args: Vec::new(),
-                        optional: false,
-                    }),
-                })));
+                    })));
             }
         };
 
@@ -800,14 +829,14 @@ impl Transformer {
                 // break if counter == length
                 self.context.func().stmts.push(Stmt::If {
                     test: Box::new(Expr::Bin {
-                        op: crate::ast::BinOp::EqEqEq,
+                        op: crate::ast::BinOp::Gteq,
                         left: Box::new(Expr::VarLoad {
                             span: Span::default(),
-                            variable: iterator_var,
+                            variable: counter,
                         }),
                         right: Box::new(Expr::VarLoad {
                             span: Span::default(),
-                            variable: counter,
+                            variable: iterator_var,
                         }),
                     }),
                 });
@@ -816,21 +845,24 @@ impl Transformer {
             }
             _ => {
                 // iterator_result = iterator.next();
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_result_var,
-                    value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member {
-                            object: Expr::VarLoad {
-                                span: Span::default(),
-                                variable: iterator_var,
-                            },
-                            prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_result_var,
+                        value: Box::new(Expr::Call {
+                            callee: Box::new(Callee::Member {
+                                object: Expr::VarLoad {
+                                    span: Span::default(),
+                                    variable: iterator_var,
+                                },
+                                prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                            }),
+                            args: Vec::new(),
+                            optional: false,
                         }),
-                        args: Vec::new(),
-                        optional: false,
-                    }),
-                })));
+                    })));
 
                 // if (iterator_result.done) {
                 //    break
@@ -910,18 +942,20 @@ impl Transformer {
             crate::ast::VariableDesc {
                 ty: Type::Int,
                 is_heap: false,
-                is_captured: false,
             },
         );
         self.context
             .func()
             .stmts
             .push(Stmt::DeclareVar(counter, Type::Int));
-        self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-            op: crate::ast::AssignOp::Assign,
-            variable: counter,
-            value: Box::new(Expr::Int(0)),
-        })));
+        self.context
+            .func()
+            .stmts
+            .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                op: crate::ast::AssignOp::Assign,
+                variable: counter,
+                value: Box::new(Expr::Int(0)),
+            })));
 
         match &iterable_ty {
             Type::Tuple(_) | Type::Array(_) => {
@@ -931,7 +965,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: iterable_ty.clone(),
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
                 self.context.func().variables.insert(
@@ -939,7 +972,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: Type::Int,
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
                 // declare variable
@@ -951,24 +983,30 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::DeclareVar(iterator_result_var, Type::Int));
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_var,
-                    value: Box::new(iterable_expr),
-                })));
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_var,
+                        value: Box::new(iterable_expr),
+                    })));
                 // assign array.length to iterator result
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_result_var,
-                    value: Box::new(Expr::Member {
-                        object: Box::new(Expr::VarLoad {
-                            span: Span::default(),
-                            variable: iterator_var,
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_result_var,
+                        value: Box::new(Expr::Member {
+                            object: Box::new(Expr::VarLoad {
+                                span: Span::default(),
+                                variable: iterator_var,
+                            }),
+                            key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
+                            optional: false,
                         }),
-                        key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
-                        optional: false,
-                    }),
-                })));
+                    })));
             }
             _ => {
                 let (iterator_ty, iterator_result_ty, value_ty) =
@@ -982,7 +1020,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: iterator_ty.clone(),
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
                 self.context.func().variables.insert(
@@ -990,7 +1027,6 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: iterator_result_ty.clone(),
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
 
@@ -1004,20 +1040,23 @@ impl Transformer {
                     .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
 
                 // iterator = iterable[Symbol.iterator]();
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_var,
-                    value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member {
-                            object: iterable_expr,
-                            prop: PropNameOrExpr::PropName(PropName::Symbol(
-                                crate::Symbol::Iterator,
-                            )),
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_var,
+                        value: Box::new(Expr::Call {
+                            callee: Box::new(Callee::Member {
+                                object: iterable_expr,
+                                prop: PropNameOrExpr::PropName(PropName::Symbol(
+                                    crate::Symbol::Iterator,
+                                )),
+                            }),
+                            args: Vec::new(),
+                            optional: false,
                         }),
-                        args: Vec::new(),
-                        optional: false,
-                    }),
-                })));
+                    })));
             }
         };
 
@@ -1047,21 +1086,24 @@ impl Transformer {
             }
             _ => {
                 // iterator_result = iterator.next();
-                self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                    op: crate::ast::AssignOp::Assign,
-                    variable: iterator_result_var,
-                    value: Box::new(Expr::Call {
-                        callee: Box::new(Callee::Member {
-                            object: Expr::VarLoad {
-                                span: Span::default(),
-                                variable: iterator_var,
-                            },
-                            prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: iterator_result_var,
+                        value: Box::new(Expr::Call {
+                            callee: Box::new(Callee::Member {
+                                object: Expr::VarLoad {
+                                    span: Span::default(),
+                                    variable: iterator_var,
+                                },
+                                prop: PropNameOrExpr::PropName(PropName::Ident("next".to_string())),
+                            }),
+                            args: Vec::new(),
+                            optional: false,
                         }),
-                        args: Vec::new(),
-                        optional: false,
-                    }),
-                })));
+                    })));
 
                 // if (iterator_result.done) {
                 //    break
@@ -1191,11 +1233,14 @@ impl Transformer {
                                     "cannot assign to constant variable",
                                 ));
                             }
-                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                                op: crate::ast::AssignOp::Assign,
-                                variable: id,
-                                value: Box::new(expr),
-                            })));
+                            self.context
+                                .func()
+                                .stmts
+                                .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                    op: crate::ast::AssignOp::Assign,
+                                    variable: id,
+                                    value: Box::new(expr),
+                                })));
                             return Ok(());
                         }
                         Some(Binding::Using { .. }) => {
@@ -1269,11 +1314,14 @@ impl Transformer {
                         .func()
                         .stmts
                         .push(Stmt::DeclareVar(var_id, var_ty));
-                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                        op: crate::ast::AssignOp::Assign,
-                        variable: var_id,
-                        value: Box::new(expr),
-                    })));
+                    self.context
+                        .func()
+                        .stmts
+                        .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            variable: var_id,
+                            value: Box::new(expr),
+                        })));
                 } else {
                     return Err(Error::syntax_error(
                         u.span,
@@ -1324,11 +1372,14 @@ impl Transformer {
                         .func()
                         .stmts
                         .push(Stmt::DeclareVar(var_id, var_ty));
-                    self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                        op: crate::ast::AssignOp::Assign,
-                        variable: var_id,
-                        value: Box::new(expr),
-                    })));
+                    self.context
+                        .func()
+                        .stmts
+                        .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            variable: var_id,
+                            value: Box::new(expr),
+                        })));
                 } else {
                     return Err(Error::syntax_error(
                         v.span,
@@ -1344,7 +1395,9 @@ impl Transformer {
         self.context.new_scope();
 
         let (test, _ty) = self.translate_expr(&i.test, Some(&Type::Bool))?;
-        self.context.func().stmts.push(Stmt::If { test: Box::new(test) });
+        self.context.func().stmts.push(Stmt::If {
+            test: Box::new(test),
+        });
 
         self.hoist_stmts([i.cons.as_ref()].into_iter())?;
         self.translate_stmt(&i.cons, None)?;
@@ -1402,13 +1455,15 @@ impl Transformer {
                     crate::ast::VariableDesc {
                         ty: Type::Any,
                         is_heap: false,
-                        is_captured: false,
                     },
                 );
             }
 
             // enter catch
-            self.context.func().stmts.push(Stmt::Catch(varid, Box::new(catch_ty)));
+            self.context
+                .func()
+                .stmts
+                .push(Stmt::Catch(varid, Box::new(catch_ty)));
 
             // translate the body
             self.translate_block_stmt(&handler.body, None)?;
@@ -1442,7 +1497,10 @@ impl Transformer {
                 let (expr, _ty) = self.translate_expr(&expr, Some(&test_ty))?;
 
                 self.context.new_scope();
-                self.context.func().stmts.push(Stmt::SwitchCase(Box::new(expr)));
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::SwitchCase(Box::new(expr)));
 
                 self.hoist_stmts(case.cons.iter())?;
 

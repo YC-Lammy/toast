@@ -9,6 +9,8 @@ mod symbol_table;
 /// transforms AST to HIR
 pub mod transform;
 
+pub mod interpreter;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// a unique identifier for variables
@@ -80,7 +82,7 @@ impl core::fmt::Display for PropName {
                 f.write_str("\"")
             }
             Self::Int(i) => {
-                let mut buf = native_js_common::itoa::Buffer::new();
+                let mut buf = native_ts_common::itoa::Buffer::new();
                 f.write_str(buf.format(*i))
             }
             Self::Private(p) => {

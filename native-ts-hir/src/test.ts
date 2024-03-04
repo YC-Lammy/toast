@@ -63,6 +63,8 @@ for (let i of [0, 9, 8]){
     i+=(99);
 }
 
+let my_array = [0, 9];
+
 fun1([],0)
 function fun1(this:any, var0:number[], var1:number):number{
     var var2:number

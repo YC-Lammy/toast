@@ -34,7 +34,7 @@ impl From<super::Type> for Type {
     fn from(value: super::Type) -> Self {
         match value {
             super::Type::Alias(_) | super::Type::Generic(_) => panic!(),
-            _ => unsafe { core::mem::transmute(value) },
+            _ => todo!(),
         }
     }
 }

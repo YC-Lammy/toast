@@ -1,4 +1,4 @@
-use native_js_common::error::Error;
+use native_ts_common::error::Error;
 
 use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
@@ -342,11 +342,14 @@ impl Transformer {
                         class_ty.static_properties.insert(name, (id, ty));
 
                         if let Some(init) = init {
-                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                                op: crate::ast::AssignOp::Assign,
-                                variable: id,
-                                value: Box::new(init),
-                            })));
+                            self.context
+                                .func()
+                                .stmts
+                                .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                    op: crate::ast::AssignOp::Assign,
+                                    variable: id,
+                                    value: Box::new(init),
+                                })));
                         }
                     } else {
                         class_ty.properties.insert(
@@ -387,11 +390,14 @@ impl Transformer {
                         class_ty.static_properties.insert(name, (id, ty));
 
                         if let Some(init) = init {
-                            self.context.func().stmts.push(Stmt::Expr(Box::new(Expr::VarAssign {
-                                op: crate::ast::AssignOp::Assign,
-                                variable: id,
-                                value: Box::new(init),
-                            })));
+                            self.context
+                                .func()
+                                .stmts
+                                .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                    op: crate::ast::AssignOp::Assign,
+                                    variable: id,
+                                    value: Box::new(init),
+                                })));
                         }
                     } else {
                         class_ty.properties.insert(
@@ -423,7 +429,7 @@ impl Transformer {
                     let old_return = core::mem::replace(&mut self.return_ty, Type::Undefined);
                     let old_is_constructor = core::mem::replace(&mut self.is_in_constructor, true);
 
-                    self.context.new_function(constructor_id);
+                    self.context.new_function(constructor_id, false, false);
 
                     // translate params
                     for p in &c.params {
