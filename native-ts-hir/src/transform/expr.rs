@@ -1,10 +1,10 @@
-use native_ts_common::error::Error;
-
 use num_traits::ToPrimitive;
 
-use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::common::{Span, Spanned, DUMMY_SP};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
+use crate::common::FunctionId;
+use crate::error::Error;
 use crate::{
     ast::{Callee, Expr, FuncType, PropNameOrExpr, Type},
     PropName,
@@ -12,11 +12,11 @@ use crate::{
 
 use super::{context::Binding, Transformer};
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 impl Transformer {
     /// entry for translateing expressions
-    pub(crate) fn translate_expr(
+    pub fn translate_expr(
         &mut self,
         expr: &swc::Expr,
         expected_ty: Option<&Type>,
@@ -94,7 +94,7 @@ impl Transformer {
                 (Expr::Closure(id), Type::Function(Box::new(ty)))
             }
             swc::Expr::Ident(id) => self.translate_var_load(id)?,
-            swc::Expr::This(_) => (Expr::This, self.this_ty.clone()),
+            swc::Expr::This(t) => (Expr::This(t.span), self.this_ty.clone()),
             swc::Expr::Object(o) => self.translate_object_lit(o, expected_ty)?,
             swc::Expr::Unary(u) => self.translate_unary_expr(u)?,
             swc::Expr::Update(u) => self.translate_update_expr(u)?,
@@ -190,7 +190,7 @@ impl Transformer {
             self.type_check(expr.span(), &ty, expected)?;
 
             if !ty.eq(expected) {
-                e = self.cast(e, &ty, expected)
+                self.cast(&mut e, &ty, expected)
             }
 
             return Ok((e, expected.clone()));
@@ -200,7 +200,7 @@ impl Transformer {
     }
 
     /// array construction expression
-    pub fn translate_array_expr(
+    fn translate_array_expr(
         &mut self,
         a: &swc::ArrayLit,
         expected_ty: Option<&Type>,
@@ -227,7 +227,7 @@ impl Transformer {
                     self.type_check(span, &ty, &expected_elem_ty)?;
 
                     if !expected_elem_ty.as_ref().eq(&ty) {
-                        expr = self.cast(expr, &ty, expected_elem_ty);
+                        self.cast(&mut expr, &ty, expected_elem_ty);
                     }
 
                     elements.push(expr);
@@ -301,7 +301,8 @@ impl Transformer {
                     match t {
                         Type::Int | Type::LiteralInt(_) => {
                             t = Type::Number;
-                            expr = Expr::Cast(Box::new(expr), Type::Number);
+                            // cast expression to number
+                            self.cast(&mut expr, &Type::Int, &Type::Number);
                         }
                         Type::LiteralNumber(_) => {
                             t = Type::Number;
@@ -334,13 +335,13 @@ impl Transformer {
         }
     }
 
-    pub fn translate_assign(&mut self, a: &swc::AssignExpr) -> Result<(Expr, Type)> {
+    fn translate_assign(&mut self, a: &swc::AssignExpr) -> Result<(Expr, Type)> {
         let (value, value_ty) = self.translate_expr(&a.right, None)?;
 
         return self.translate_assign_target(a.span, &a.left, a.op, value, value_ty);
     }
 
-    pub fn translate_assign_target(
+    fn translate_assign_target(
         &mut self,
         span: Span,
         target: &swc::AssignTarget,
@@ -457,7 +458,7 @@ impl Transformer {
         return Ok(());
     }
 
-    pub fn translate_var_assign(
+    fn translate_var_assign(
         &mut self,
         span: Span,
         var: &swc::Ident,
@@ -510,7 +511,7 @@ impl Transformer {
         self.type_check(var.span, &value_ty, &var_ty)?;
 
         if value_ty != var_ty {
-            value = self.cast(value, &value_ty, &var_ty);
+            self.cast(&mut value, &value_ty, &var_ty);
         };
 
         // check if operand type is valid for assignment
@@ -526,7 +527,7 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_member_assign(
+    fn translate_member_assign(
         &mut self,
         span: Span,
         member: &swc::MemberExpr,
@@ -539,7 +540,7 @@ impl Transformer {
         self.type_check(span, &value_ty, &member_ty)?;
 
         if value_ty != member_ty {
-            value = Expr::Cast(Box::new(value), member_ty.clone());
+            self.cast(&mut value, &value_ty, &member_ty);
         }
 
         if let Expr::Member {
@@ -571,7 +572,7 @@ impl Transformer {
         }
     }
 
-    pub fn translate_object_pat_assign(
+    fn translate_object_pat_assign(
         &mut self,
         pat: &swc::ObjectPat,
         value: Expr,
@@ -724,7 +725,7 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_array_pat_assign(
+    fn translate_array_pat_assign(
         &mut self,
         pat: &swc::ArrayPat,
         value: Expr,
@@ -849,7 +850,7 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_pat_assign(
+    fn translate_pat_assign(
         &mut self,
         pat: &swc::Pat,
         op: swc::AssignOp,
@@ -890,7 +891,7 @@ impl Transformer {
         }
     }
 
-    pub fn translate_bin(&mut self, b: &swc::BinExpr) -> Result<(Expr, Type)> {
+    fn translate_bin(&mut self, b: &swc::BinExpr) -> Result<(Expr, Type)> {
         if b.op == swc::BinaryOp::In {
             let prop = self.translate_computed_prop_name(&b.left)?;
             let (right, right_ty) = self.translate_expr(&b.right, None)?;
@@ -977,13 +978,15 @@ impl Transformer {
                 } else if left_ty == Type::Int && right_ty == Type::Number {
                     // cast left hand side as number
                     left_ty = Type::Number;
-                    left = Expr::Cast(Box::new(left), Type::Number);
+                    // cast expression
+                    self.cast(&mut left, &Type::Int, &Type::Number);
                     // result is number
                     ty = Type::Number;
                 } else if left_ty == Type::Number && right_ty == Type::Int {
                     // cast right hand side as number
                     right_ty = Type::Number;
-                    right = Expr::Cast(Box::new(right), Type::Number);
+                    // cast expression
+                    self.cast(&mut right, &Type::Int, &Type::Number);
                     // result is number
                     ty = Type::Number;
                 // both are bigint
@@ -1003,40 +1006,26 @@ impl Transformer {
                 // right should be equal to left
                 debug_assert!(right_ty == left_ty);
                 debug_assert!(
-                    left_ty == Type::Int || left_ty == Type::Number || left_ty == Type::Bigint
+                    left_ty == Type::Int
+                        || left_ty == Type::Number
+                        || left_ty == Type::Bigint
+                        || left_ty == Type::String
                 );
             }
             swc::BinaryOp::Div => {
+                if left_ty == Type::Int {
+                    left_ty = Type::Number;
+                    self.cast(&mut left, &Type::Int, &Type::Number);
+                }
+                if right_ty == Type::Int {
+                    right_ty = Type::Number;
+                    self.cast(&mut right, &Type::Int, &Type::Number);
+                }
                 // both are number
                 if left_ty == Type::Number && right_ty == Type::Number {
                     ty = Type::Number;
-                } else if left_ty == Type::Int && right_ty == Type::Int {
-                    // integers must be casted into number in a division
-                    left = Expr::Cast(Box::new(left), Type::Number);
-                    right = Expr::Cast(Box::new(right), Type::Number);
-                    // both are int
-                    ty = Type::Number;
-                } else if left_ty == Type::Int && right_ty == Type::Number {
-                    // cast left hand side as number
-                    left_ty = Type::Number;
-                    left = Expr::Cast(Box::new(left), Type::Number);
-                    // result is number
-                    ty = Type::Number;
-                } else if left_ty == Type::Number && right_ty == Type::Int {
-                    // cast right hand side as number
-                    right_ty = Type::Number;
-                    right = Expr::Cast(Box::new(right), Type::Number);
-                    // result is number
-                    ty = Type::Number;
-                // both are bigint
                 } else if left_ty == Type::Bigint && right_ty == Type::Bigint {
                     ty = Type::Bigint;
-                // both are string
-                } else if b.op == swc::BinaryOp::Add
-                    && left_ty == Type::String
-                    && right_ty == Type::String
-                {
-                    ty = Type::String
                 } else {
                     // unsupported types
                     return Err(Error::syntax_error(b.span, format!("The operand of an arithmetic operation must be of type 'number' or 'bigint'")));
@@ -1057,12 +1046,12 @@ impl Transformer {
                 if left_ty == Type::Number {
                     // cast to int
                     left_ty = Type::Int;
-                    left = Expr::Cast(Box::new(left), Type::Int);
+                    self.cast(&mut left, &Type::Number, &Type::Int);
                 }
                 if right_ty == Type::Number {
                     // cast to int
                     right_ty = Type::Int;
-                    right = Expr::Cast(Box::new(right), Type::Int)
+                    self.cast(&mut right, &Type::Number, &Type::Int);
                 }
                 // both sides must be int or bigint
                 if !(left_ty == Type::Int && right_ty == Type::Int)
@@ -1095,12 +1084,12 @@ impl Transformer {
                 } else if left_ty == Type::Int && right_ty == Type::Number {
                     // cast left to number
                     left_ty = Type::Number;
-                    left = Expr::Cast(Box::new(left), Type::Number);
+                    self.cast(&mut left, &Type::Int, &Type::Number);
                     ty = Type::Bool;
                 } else if left_ty == Type::Number && right_ty == Type::Int {
                     // cast right to number
                     right_ty = Type::Number;
-                    right = Expr::Cast(Box::new(right), Type::Number);
+                    self.cast(&mut right, &Type::Number, &Type::Int);
                     ty = Type::Bool;
                 // both are bigint
                 } else if left_ty == Type::Bigint && right_ty == Type::Bigint {
@@ -1117,12 +1106,12 @@ impl Transformer {
             }
             swc::BinaryOp::LogicalAnd => {
                 if left_ty != Type::Bool {
+                    self.cast(&mut left, &left_ty, &Type::Bool);
                     left_ty = Type::Bool;
-                    left = Expr::Cast(Box::new(left), Type::Bool);
                 }
                 if right_ty != Type::Bool {
+                    self.cast(&mut right, &right_ty, &Type::Bool);
                     right_ty = Type::Bool;
-                    right = Expr::Cast(Box::new(right), Type::Bool);
                 }
 
                 debug_assert_eq!(right_ty, left_ty);
@@ -1145,7 +1134,7 @@ impl Transformer {
 
     /// translates the call expression.
     /// currently, generics are not supported yet
-    pub fn translate_call(&mut self, call: &swc::CallExpr) -> Result<(Expr, Type)> {
+    fn translate_call(&mut self, call: &swc::CallExpr) -> Result<(Expr, Type)> {
         let (callee, callee_ty) = match &call.callee {
             swc::Callee::Super(s) => {
                 if !self.is_in_constructor {
@@ -1265,18 +1254,18 @@ impl Transformer {
             }
 
             // translate argument
-            let (a, arg_ty) = self.translate_expr(&arg.expr, expected_arguments.get(i))?;
+            let (mut a, arg_ty) = self.translate_expr(&arg.expr, expected_arguments.get(i))?;
 
             // check argument fulfills type
             self.type_check(arg.span(), &arg_ty, &expected_arguments[i])?;
 
-            if arg_ty.eq(&expected_arguments[i]) {
-                // push expression to arguments
-                args.push(a);
-            } else {
+            if &arg_ty != &expected_arguments[i] {
                 // convert value to type
-                args.push(Expr::Cast(Box::new(a), expected_arguments[i].clone()))
+                self.cast(&mut a, &arg_ty, &expected_arguments[i]);
             }
+
+            // push expression to arguments
+            args.push(a);
         }
 
         return Ok((
@@ -1289,14 +1278,14 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_cond(&mut self, cond: &swc::CondExpr) -> Result<(Expr, Type)> {
+    fn translate_cond(&mut self, cond: &swc::CondExpr) -> Result<(Expr, Type)> {
         let (mut test, test_ty) = self.translate_expr(&cond.test, None)?;
         let (cons, cons_ty) = self.translate_expr(&cond.cons, None)?;
         let (alt, alt_ty) = self.translate_expr(&cond.alt, None)?;
 
         if test_ty != Type::Bool {
             // cast it to bool
-            test = Expr::Cast(Box::new(test), Type::Bool);
+            self.cast(&mut test, &test_ty, &Type::Bool);
         }
 
         return Ok((
@@ -1309,21 +1298,14 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_var_load(&mut self, ident: &swc::Ident) -> Result<(Expr, Type)> {
+    fn translate_var_load(&mut self, ident: &swc::Ident) -> Result<(Expr, Type)> {
         match self.context.find(&ident.sym) {
             Some(Binding::Var {
-                writable,
+                writable: _,
                 redeclarable: _,
                 id,
                 ty,
             }) => {
-                if !*writable {
-                    return Err(Error::syntax_error(
-                        ident.span,
-                        "constant is not assignable",
-                    ));
-                }
-
                 return Ok((
                     Expr::VarLoad {
                         span: ident.span,
@@ -1369,7 +1351,7 @@ impl Transformer {
         }
     }
 
-    pub fn translate_member(&mut self, member: &swc::MemberExpr) -> Result<(Expr, Type)> {
+    fn translate_member(&mut self, member: &swc::MemberExpr) -> Result<(Expr, Type)> {
         let (obj, obj_ty) = self.translate_expr(&member.obj, None)?;
 
         let prop = match &member.prop {
@@ -1413,7 +1395,7 @@ impl Transformer {
                         self.type_check(member.span, &ty, k)?;
 
                         if &ty != k.as_ref() {
-                            e = Box::new(Expr::Cast(e, k.as_ref().clone()));
+                            self.cast(&mut e, &ty, k.as_ref());
                         }
                         return Ok((
                             Expr::Member {
@@ -1471,13 +1453,13 @@ impl Transformer {
         }
     }
 
-    pub fn translate_unary_expr(&mut self, u: &swc::UnaryExpr) -> Result<(Expr, Type)> {
+    fn translate_unary_expr(&mut self, u: &swc::UnaryExpr) -> Result<(Expr, Type)> {
         let (mut expr, ty) = self.translate_expr(&u.arg, None)?;
         match u.op {
             swc::UnaryOp::Bang => {
                 if ty != Type::Bool {
                     // cast type to bool
-                    expr = Expr::Cast(Box::new(expr), Type::Bool);
+                    self.cast(&mut expr, &ty, &Type::Bool)
                 }
 
                 return Ok((
@@ -1542,15 +1524,7 @@ impl Transformer {
                     }
                 }
 
-                if ty == Type::Number {
-                    expr = Expr::Cast(Box::new(expr), Type::Int)
-                }
-                if let Type::LiteralNumber(_) = ty {
-                    expr = Expr::Cast(Box::new(expr), Type::Int);
-                }
-                if let Type::LiteralBigint(_) = ty {
-                    expr = Expr::Cast(Box::new(expr), Type::Bigint);
-                }
+                self.cast(&mut expr, &ty, &Type::Int);
 
                 // return expression
                 return Ok((
@@ -1562,47 +1536,14 @@ impl Transformer {
                 ));
             }
             swc::UnaryOp::TypeOf => {
-                let ty_s = match ty {
-                    Type::AnyObject
-                    | Type::Null
-                    | Type::Object(_)
-                    | Type::LiteralObject(_)
-                    | Type::Regex
-                    | Type::Array(_)
-                    | Type::Function(_)
-                    | Type::Map(_, _)
-                    | Type::Promise(_)
-                    | Type::Tuple(_)
-                    | Type::Iterator(_) => "object",
-                    Type::Bigint | Type::LiteralBigint(_) => "bigint",
-                    Type::Bool | Type::LiteralBool(_) => "boolean",
-                    Type::Enum(_)
-                    | Type::Int
-                    | Type::Number
-                    | Type::LiteralInt(_)
-                    | Type::LiteralNumber(_) => "number",
-                    Type::String | Type::LiteralString(_) => "string",
-                    Type::Symbol => "symbol",
-                    Type::Undefined => "undefined",
-                    // these type cannot be known at compile time
-                    Type::Any
-                    | Type::Alias(_)
-                    | Type::Generic(_)
-                    | Type::Interface(_)
-                    | Type::Union(_) => {
-                        // runtime reflect
-                        return Ok((
-                            Expr::Unary {
-                                op: crate::ast::UnaryOp::Typeof,
-                                value: Box::new(expr),
-                            },
-                            Type::String,
-                        ));
-                    }
-                };
-
-                // return the literal string of type
-                return Ok((Expr::String(ty_s.to_string()), Type::String));
+                // runtime reflect
+                return Ok((
+                    Expr::Unary {
+                        op: crate::ast::UnaryOp::Typeof,
+                        value: Box::new(expr),
+                    },
+                    Type::String,
+                ));
             }
             swc::UnaryOp::Void => {
                 // simply return undefined
@@ -1617,7 +1558,7 @@ impl Transformer {
         }
     }
 
-    pub fn translate_update_expr(&mut self, u: &swc::UpdateExpr) -> Result<(Expr, Type)> {
+    fn translate_update_expr(&mut self, u: &swc::UpdateExpr) -> Result<(Expr, Type)> {
         let (expr, ty) = self.translate_expr(&u.arg, None)?;
 
         let op = match u.op {
@@ -1692,7 +1633,7 @@ impl Transformer {
         };
     }
 
-    pub fn translate_super_prop_expr(&mut self, s: &swc::SuperPropExpr) -> Result<(Expr, Type)> {
+    fn translate_super_prop_expr(&mut self, s: &swc::SuperPropExpr) -> Result<(Expr, Type)> {
         if self.super_class.is_none() {
             return Err(Error::syntax_error(
                 s.span,
@@ -1760,7 +1701,7 @@ impl Transformer {
                 Expr::Member {
                     object: Box::new(
                         // cast this to super
-                        Expr::Cast(Box::new(Expr::This), Type::Object(super_class)),
+                        Expr::Cast(Box::new(Expr::This(s.obj.span)), Type::Object(super_class)),
                     ),
                     key: PropNameOrExpr::PropName(prop),
                     optional: false,
@@ -1775,7 +1716,7 @@ impl Transformer {
         ));
     }
 
-    pub fn translate_new_expr(&mut self, n: &swc::NewExpr) -> Result<(Expr, Type)> {
+    fn translate_new_expr(&mut self, n: &swc::NewExpr) -> Result<(Expr, Type)> {
         let ident = match n.callee.as_ident() {
             Some(ident) => ident,
             None => return Err(Error::syntax_error(n.callee.span(), "expected identifier")),
@@ -1849,7 +1790,7 @@ impl Transformer {
         };
     }
 
-    pub fn translate_seq_expr(
+    fn translate_seq_expr(
         &mut self,
         s: &swc::SeqExpr,
         expected_ty: Option<&Type>,
@@ -1902,7 +1843,7 @@ impl Transformer {
         return Ok((Expr::Undefined, Type::Undefined));
     }
 
-    pub fn translate_lit(
+    fn translate_lit(
         &mut self,
         lit: &swc::Lit,
         expected_ty: Option<&Type>,
@@ -1934,14 +1875,160 @@ impl Transformer {
         }
     }
 
-    pub fn translate_object_lit(
-        &self,
+    fn translate_object_lit(
+        &mut self,
         obj: &swc::ObjectLit,
         expected_ty: Option<&Type>,
     ) -> Result<(Expr, Type)> {
+        let expected_obj_ty = match expected_ty {
+            Some(Type::LiteralObject(obj)) => Some(obj),
+            _ => None,
+        };
+
+        let mut spans = Vec::new();
+        let mut tys = Vec::new();
+        let mut values = Vec::new();
+
+        for p in &obj.props {
+            match p {
+                swc::PropOrSpread::Spread(s) => {
+                    return Err(Error::syntax_error(
+                        s.dot3_token,
+                        "spread expression not supported",
+                    ))
+                }
+                swc::PropOrSpread::Prop(p) => {
+                    match p.as_ref() {
+                        swc::Prop::KeyValue(v) => {
+                            let key = match self.translate_prop_name(&v.key)? {
+                                PropNameOrExpr::PropName(p) => p,
+                                PropNameOrExpr::Expr(_, _) => {
+                                    return Err(Error::syntax_error(
+                                        v.span(),
+                                        "computed property name not allowed",
+                                    ))
+                                }
+                            };
+
+                            let (mut value, mut ty) = self.translate_expr(&v.value, None)?;
+
+                            match ty {
+                                Type::Int | Type::LiteralInt(_) => {
+                                    // cast to number
+                                    self.cast(&mut value, &ty, &Type::Number);
+                                    ty = Type::Number
+                                }
+                                Type::LiteralNumber(_) => ty = Type::Number,
+                                Type::LiteralString(_) => ty = Type::String,
+                                Type::LiteralBigint(_) => ty = Type::Bigint,
+                                Type::LiteralBool(_) => ty = Type::Bool,
+                                _ => {}
+                            };
+
+                            spans.push(v.key.span());
+                            tys.push((key.clone(), ty));
+                            values.push((key, value));
+                        }
+                        swc::Prop::Shorthand(s) => {
+                            if s.optional {
+                                return Err(Error::syntax_error(
+                                    s.span,
+                                    "object literal shorthand cannot be optional",
+                                ));
+                            }
+
+                            let key = PropName::Ident(s.sym.to_string());
+
+                            let (value, ty) = self.translate_var_load(s)?;
+
+                            spans.push(s.span);
+                            tys.push((key.clone(), ty));
+                            values.push((key, value));
+                        }
+                        swc::Prop::Method(m) => {
+                            let key = match self.translate_prop_name(&m.key)? {
+                                PropNameOrExpr::PropName(p) => p,
+                                PropNameOrExpr::Expr(_, _) => {
+                                    return Err(Error::syntax_error(
+                                        m.key.span(),
+                                        "computed property name not allowed",
+                                    ))
+                                }
+                            };
+
+                            let funcid = FunctionId::new();
+
+                            self.translate_function(funcid, None, &m.function)?;
+
+                            let value = Expr::Closure(funcid);
+                            let ty = Type::Function(Box::new(
+                                self.context.functions.get(&funcid).unwrap().ty(),
+                            ));
+
+                            spans.push(m.key.span());
+                            tys.push((key.clone(), ty));
+                            values.push((key, value));
+                        }
+                        swc::Prop::Getter(g) => {
+                            // todo: getter
+                            return Err(Error::syntax_error(g.span, "getter not supported"));
+                        }
+                        swc::Prop::Setter(s) => {
+                            // todo: setter
+                            return Err(Error::syntax_error(s.span, "setter not supported"));
+                        }
+                        // this is invalid for object literal
+                        swc::Prop::Assign(_) => unreachable!(),
+                    }
+                }
+            }
+        }
+
+        for (n, (p1, _)) in values.iter().enumerate() {
+            for (i, (p2, _)) in values.iter().enumerate() {
+                if n != i && p1 == p2 {
+                    return Err(Error::syntax_error(spans[i], "duplicated property name"));
+                }
+            }
+        }
+
+        if let Some(obj_ty) = expected_obj_ty {
+            for (i, (p1, ty)) in obj_ty.iter().enumerate() {
+                if let Some((_p2, e)) = values.iter_mut().find(|(p2, _)| p1 == p2) {
+                    // type check
+                    self.type_check(spans[i], &tys[i].1, ty)?;
+
+                    if &tys[i].1 != ty {
+                        self.cast(e, &tys[i].1, ty);
+                    }
+                } else {
+                    if let Ok(()) = self.type_check(DUMMY_SP, &Type::Undefined, ty) {
+                        // create an undefined
+                        let mut e = Expr::Undefined;
+                        // cast undefined to type
+                        self.cast(&mut e, &Type::Undefined, ty);
+                        // push it to values
+                        values.push((p1.clone(), e))
+                    } else {
+                        return Err(Error::syntax_error(
+                            obj.span,
+                            format!("missing property '{}'", p1),
+                        ));
+                    }
+                }
+            }
+        };
+
+        let ty = if let Some(obj_ty) = expected_obj_ty {
+            Type::LiteralObject(obj_ty.clone())
+        } else {
+            Type::LiteralObject(tys.into_boxed_slice())
+        };
+
+        return Ok((Expr::Object { props: values }, ty));
     }
 
-    pub fn translate_optchain(&mut self, n: &swc::OptChainExpr) -> Result<(Expr, Type)> {
+    fn translate_optchain(&mut self, n: &swc::OptChainExpr) -> Result<(Expr, Type)> {
         match n.base.as_ref() {
             swc::OptChainBase::Member(m) => {
                 let (mut expr, ty) = self.translate_member(m)?;
@@ -2108,7 +2195,7 @@ impl Transformer {
         }
     }
 
-    pub fn translate_prop_name(&mut self, name: &swc::PropName) -> Result<PropNameOrExpr> {
+    pub(super) fn translate_prop_name(&mut self, name: &swc::PropName) -> Result<PropNameOrExpr> {
         match name {
             swc::PropName::BigInt(b) => Ok(PropNameOrExpr::PropName(crate::PropName::String(
                 b.value.to_string(),
@@ -2134,7 +2221,10 @@ impl Transformer {
         }
     }
 
-    pub fn translate_computed_prop_name(&mut self, expr: &swc::Expr) -> Result<PropNameOrExpr> {
+    pub(super) fn translate_computed_prop_name(
+        &mut self,
+        expr: &swc::Expr,
+    ) -> Result<PropNameOrExpr> {
         match expr {
             swc::Expr::PrivateName(n) => {
                 return Ok(PropNameOrExpr::PropName(PropName::Private(

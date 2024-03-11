@@ -17,22 +17,18 @@ lto = true
 panic = 'unwind'
 
 [dependencies]
+libobject = {version= "*", path="../libobject"}
 atoi = "*"
 lazy_static = "*"
 parking_lot = "*"
 num-bigint = "*"
 
-corosensei = "0.1.4"
+lazy_thread_local = "0.1.1"
 
 
 libc = "*"
 unwinding = {version = "0.2", default-features=false, features=["unwinder"]}
 gimli = { version = "0.26.1", default-features = false, features = ["read-core"] }
-
-iron-gc = {path = "../iron-gc"}
-
-
-native-js-common = {version = "*", path = "../native-js-common"}
 
 [build-dependencies]
 cc = "1.0"

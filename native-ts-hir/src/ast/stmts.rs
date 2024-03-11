@@ -2,6 +2,16 @@ use crate::common::{ClassId, FunctionId, InterfaceId, VariableId};
 
 use super::{Expr, Type};
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarKind {
+    Var,
+    Let,
+    Const,
+    Using,
+    AwaitUsing,
+}
+
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// declares a class type
@@ -17,7 +27,11 @@ pub enum Stmt {
     /// declares a generic function
     DeclareGenericFunction(FunctionId),
     /// declares a variable
-    DeclareVar(VariableId, Type),
+    DeclareVar {
+        kind: VarKind,
+        id: VariableId,
+        ty: Type,
+    },
     /// indicate variable is out of scope
     DropVar(VariableId),
     /// start of a block
@@ -57,7 +71,7 @@ pub enum Stmt {
 
     Try,
     EndTry,
-    Catch(VariableId, Box<Type>),
+    Catch(VariableId),
     EndCatch,
     Finally,
     EndFinally,

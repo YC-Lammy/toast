@@ -261,7 +261,7 @@ pub enum Expr {
     /// a closure captures variables
     Closure(FunctionId),
     /// read the this binding
-    This,
+    This(Span),
     /// constructs an array
     Array {
         values: Vec<Expr>,

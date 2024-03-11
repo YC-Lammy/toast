@@ -11,8 +11,10 @@ class Vechical{
 }
 
 class Car extends Vechical implements Thing{
-    constructor(){
-        super()
+    constructor(a:boolean){
+        if (a){
+            super()
+        }
     }
     crash(speed:number, human: Human): boolean{
         if (speed > 60){
@@ -44,7 +46,7 @@ interface B{
 type U = A & B;
 
 let human = new Human;
-var car = new Car;
+var car = new Car(false);
 
 let i = 0;
 i = i + 1;
@@ -88,3 +90,5 @@ function fun1(this:any, var0:number[], var1:number):number{
         }
     }    return -(1)
 }
+
+let t = {i:0, u: "i"}

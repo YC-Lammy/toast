@@ -1,9 +1,4 @@
-use std::collections::HashMap;
-
-use native_ts_hir::ast::format::Formatter;
-use native_ts_hir::ast::Program;
-use native_ts_hir::interpreter::Interpreter;
-use native_ts_hir::transform::Transformer;
+mod common;
 
 #[test]
 fn binary_search() {
@@ -46,32 +41,5 @@ fn binary_search() {
         return -1;
     }";
 
-    let parser = native_ts_parser::Parser::new();
-    let m = parser
-        .parse_str("test".to_string(), s.to_string())
-        .expect("parse failed");
-
-    for (id, module) in m.modules {
-        let mut t = Transformer::new();
-
-        let re = t
-            .transform_module(&module.module, vec![])
-            .expect("parse error");
-        let mut formatter = Formatter::new(&re.table);
-        formatter.format_module(&re);
-
-        let formated = formatter.emit_string();
-        println!("{}", formated);
-
-        let intpr = Interpreter::new();
-
-        let id = unsafe { core::mem::transmute(id) };
-
-        let re = intpr.run(&Program {
-            entry: id,
-            modules: HashMap::from_iter([(id, re)]),
-        });
-
-        println!("{:#?}", re);
-    }
+    common::run_test(s);
 }

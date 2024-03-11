@@ -1,8 +1,9 @@
-use native_ts_common::error::Error;
-use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::common::{Span, Spanned, DUMMY_SP};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
-use crate::ast::UnaryOp;
+use crate::ast::{UnaryOp, VarKind};
+use crate::error::Error;
+use crate::Symbol;
 use crate::{
     ast::{Callee, Expr, PropNameOrExpr, Stmt, Type},
     common::VariableId,
@@ -11,7 +12,7 @@ use crate::{
 
 use super::{context::Binding, Transformer};
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 impl Transformer {
     /// translates a statement
@@ -44,11 +45,9 @@ impl Transformer {
                     .stmts
                     .push(Stmt::Continue(label.map(|l| l.to_string())))
             }
-            swc::Stmt::Debugger(d) => {
-                return Err(Error::syntax_error(
-                    d.span,
-                    "debugger statement not allowed",
-                ))
+            swc::Stmt::Debugger(_d) => {
+                // todo: debugger
+                return Ok(());
             }
             swc::Stmt::Decl(d) => self.translate_decl(d)?,
             swc::Stmt::DoWhile(d) => self.translate_do_while(d, label)?,
@@ -282,10 +281,15 @@ impl Transformer {
             return Err(Error::syntax_error(ident.span, "duplicated identifier"));
         }
 
-        self.context
-            .func()
-            .stmts
-            .push(Stmt::DeclareVar(varid, ty.unwrap()));
+        self.context.func().stmts.push(Stmt::DeclareVar {
+            kind: match kind {
+                swc::VarDeclKind::Const => VarKind::Const,
+                swc::VarDeclKind::Let => VarKind::Let,
+                swc::VarDeclKind::Var => VarKind::Var,
+            },
+            id: varid,
+            ty: ty.unwrap(),
+        });
 
         if let Some(init) = init_expr {
             self.context
@@ -479,23 +483,62 @@ impl Transformer {
                 let varid = VariableId::new();
                 ids.push(varid);
 
-                let mut ty = None;
-                let mut init_expr = None;
+                let mut var_ty = None;
 
                 if let Some(ann) = &ident.type_ann {
-                    ty = Some(self.translate_type(&ann.type_ann)?);
+                    let ty = self.translate_type(&ann.type_ann)?;
+                    var_ty = Some(ty);
                 }
-                if let Some(init) = &d.init {
-                    let (init, init_ty) = self.translate_expr(&init, ty.as_ref())?;
-                    init_expr = Some(init);
+                let (init_expr, init_ty) = if let Some(init) = &d.init {
+                    self.translate_expr(&init, var_ty.as_ref())?
+                } else {
+                    return Err(Error::syntax_error(d.span, "missing initialiser"));
+                };
 
-                    if ty.is_none() {
-                        ty = Some(init_ty);
+                let sym = if decl.is_await {
+                    Symbol::AsyncDispose
+                } else {
+                    Symbol::Dispose
+                };
+
+                // type check
+                if let Some(f) = self.type_has_property(&init_ty, &PropName::Symbol(sym), true) {
+                    match f {
+                        Type::Function(f) => {
+                            if let Err(_) = self.type_check(DUMMY_SP, &init_ty, &f.this_ty) {
+                                return Err(Error::syntax_error(
+                                    d.span,
+                                    format!(
+                                        "'this' argument of '{}' is not compatable with type: ''",
+                                        PropName::Symbol(sym)
+                                    ),
+                                ));
+                            }
+                            if !f.params.is_empty() {
+                                return Err(Error::syntax_error(
+                                    d.span,
+                                    format!(
+                                        "property '{}' expected function with 0 arguments",
+                                        PropName::Symbol(sym)
+                                    ),
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(Error::syntax_error(
+                                d.span,
+                                format!(
+                                    "property '{}' of type '' is not a functon",
+                                    PropName::Symbol(sym)
+                                ),
+                            ))
+                        }
                     }
-                }
-
-                if ty.is_none() {
-                    return Err(Error::syntax_error(ident.span, "missing type annotation"));
+                } else {
+                    return Err(Error::syntax_error(
+                        d.span,
+                        format!("type '' has no property '{}'", PropName::Symbol(sym)),
+                    ));
                 }
 
                 // declare variable
@@ -504,31 +547,34 @@ impl Transformer {
                     super::context::Binding::Using {
                         is_await: decl.is_await,
                         id: varid,
-                        ty: ty.as_ref().unwrap().clone(),
+                        ty: init_ty.clone(),
                     },
                 ) {
                     return Err(Error::syntax_error(ident.span, "duplicated identifier"));
                 }
 
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: if decl.is_await {
+                        VarKind::AwaitUsing
+                    } else {
+                        VarKind::Using
+                    },
+                    id: varid,
+                    ty: init_ty.clone(),
+                });
+
                 self.context
                     .func()
                     .stmts
-                    .push(Stmt::DeclareVar(varid, ty.as_ref().unwrap().clone()));
-
-                if let Some(init) = init_expr {
-                    self.context
-                        .func()
-                        .stmts
-                        .push(Stmt::Expr(Box::new(Expr::VarAssign {
-                            op: crate::ast::AssignOp::Assign,
-                            variable: varid,
-                            value: Box::new(init),
-                        })));
-                }
+                    .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        op: crate::ast::AssignOp::Assign,
+                        variable: varid,
+                        value: Box::new(init_expr),
+                    })));
             } else {
                 return Err(Error::syntax_error(
                     d.span,
-                    "destructive variable not supported",
+                    "destructive pattern not allowed",
                 ));
             }
         }
@@ -727,10 +773,11 @@ impl Transformer {
                 is_heap: false,
             },
         );
-        self.context
-            .func()
-            .stmts
-            .push(Stmt::DeclareVar(counter, Type::Int));
+        self.context.func().stmts.push(Stmt::DeclareVar {
+            kind: VarKind::Var,
+            id: counter,
+            ty: Type::Int,
+        });
         self.context
             .func()
             .stmts
@@ -751,10 +798,11 @@ impl Transformer {
                     },
                 );
                 // declare variable
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_var, Type::Int));
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_var,
+                    ty: Type::Int,
+                });
                 // assign array.length to iterator
                 self.context
                     .func()
@@ -789,14 +837,16 @@ impl Transformer {
                     },
                 );
 
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_var, iterator_ty));
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_var,
+                    ty: iterator_ty,
+                });
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_result_var,
+                    ty: iterator_result_ty,
+                });
 
                 // iterator = iterable[Symbol.iterator]();
                 self.context
@@ -944,10 +994,11 @@ impl Transformer {
                 is_heap: false,
             },
         );
-        self.context
-            .func()
-            .stmts
-            .push(Stmt::DeclareVar(counter, Type::Int));
+        self.context.func().stmts.push(Stmt::DeclareVar {
+            kind: VarKind::Var,
+            id: counter,
+            ty: Type::Int,
+        });
         self.context
             .func()
             .stmts
@@ -975,14 +1026,16 @@ impl Transformer {
                     },
                 );
                 // declare variable
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_var, iterable_ty.clone()));
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_result_var, Type::Int));
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_var,
+                    ty: iterable_ty.clone(),
+                });
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_result_var,
+                    ty: Type::Int,
+                });
                 self.context
                     .func()
                     .stmts
@@ -1030,14 +1083,16 @@ impl Transformer {
                     },
                 );
 
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_var, iterator_ty));
-                self.context
-                    .func()
-                    .stmts
-                    .push(Stmt::DeclareVar(iterator_result_var, iterator_result_ty));
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_var,
+                    ty: iterator_ty,
+                });
+                self.context.func().stmts.push(Stmt::DeclareVar {
+                    kind: VarKind::Var,
+                    id: iterator_result_var,
+                    ty: iterator_result_ty,
+                });
 
                 // iterator = iterable[Symbol.iterator]();
                 self.context
@@ -1310,10 +1365,15 @@ impl Transformer {
                         ));
                     }
 
-                    self.context
-                        .func()
-                        .stmts
-                        .push(Stmt::DeclareVar(var_id, var_ty));
+                    self.context.func().stmts.push(Stmt::DeclareVar {
+                        kind: if u.is_await {
+                            VarKind::AwaitUsing
+                        } else {
+                            VarKind::Using
+                        },
+                        id: var_id,
+                        ty: var_ty,
+                    });
                     self.context
                         .func()
                         .stmts
@@ -1368,10 +1428,15 @@ impl Transformer {
                         ));
                     }
 
-                    self.context
-                        .func()
-                        .stmts
-                        .push(Stmt::DeclareVar(var_id, var_ty));
+                    self.context.func().stmts.push(Stmt::DeclareVar {
+                        kind: match v.kind {
+                            swc::VarDeclKind::Const => VarKind::Const,
+                            swc::VarDeclKind::Let => VarKind::Let,
+                            swc::VarDeclKind::Var => VarKind::Var,
+                        },
+                        id: var_id,
+                        ty: var_ty,
+                    });
                     self.context
                         .func()
                         .stmts
@@ -1427,7 +1492,6 @@ impl Transformer {
 
         if let Some(handler) = &t.handler {
             let varid = VariableId::new();
-            let mut catch_ty = Type::Any;
 
             self.context.new_scope();
 
@@ -1435,7 +1499,11 @@ impl Transformer {
                 // only accept ident
                 if let Some(ident) = pat.as_ident() {
                     if let Some(ann) = &ident.type_ann {
-                        catch_ty = self.translate_type(&ann.type_ann)?;
+                        let catch_ty = self.translate_type(&ann.type_ann)?;
+
+                        if catch_ty != Type::Any{
+                            return Err(Error::syntax_error(ann.span, "Catch clause variable type annotation must be 'any' or 'unknown' if specified."))
+                        }
                     }
                     self.context.declare(
                         &ident.sym,
@@ -1443,7 +1511,7 @@ impl Transformer {
                             writable: false,
                             redeclarable: false,
                             id: varid,
-                            ty: catch_ty.clone(),
+                            ty: Type::Any,
                         },
                     );
                 } else {
@@ -1463,7 +1531,7 @@ impl Transformer {
             self.context
                 .func()
                 .stmts
-                .push(Stmt::Catch(varid, Box::new(catch_ty)));
+                .push(Stmt::Catch(varid));
 
             // translate the body
             self.translate_block_stmt(&handler.body, None)?;

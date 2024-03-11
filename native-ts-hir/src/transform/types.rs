@@ -1,101 +1,107 @@
 use std::collections::HashMap;
 
-use native_ts_common::error::Error;
 use native_ts_parser::swc_core::common::{Span, Spanned};
 use native_ts_parser::swc_core::ecma::ast as swc;
+use num_traits::ToPrimitive;
 
 use crate::ast::{
     EnumType, EnumVariantDesc, Expr, FuncType, InterfaceMethod, InterfacePropertyDesc,
     InterfaceType, PropNameOrExpr, Type,
 };
 use crate::common::{AliasId, ClassId, FunctionId, InterfaceId};
+use crate::error::Error;
 use crate::{PropName, Symbol};
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 use super::{context::Binding, Transformer};
 
 impl Transformer {
-    pub fn cast(&mut self, expr: Expr, expr_ty: &Type, ty: &Type) -> Expr {
+    pub fn cast(&mut self, expr: &mut Expr, expr_ty: &Type, ty: &Type) {
         if expr_ty == ty {
-            return expr;
+            return;
         }
         if let Type::LiteralInt(_) = expr_ty {
             if ty == &Type::Int {
-                return expr;
+                return;
             }
         }
         if let Type::LiteralNumber(_) = expr_ty {
             if ty == &Type::Number {
-                return expr;
+                return;
             }
         }
         if let Type::LiteralBool(_) = expr_ty {
             if ty == &Type::Bool {
-                return expr;
+                return;
             }
         }
         if let Type::LiteralBigint(_) = expr_ty {
             if ty == &Type::Bigint {
-                return expr;
+                return;
             }
         }
         if let Type::LiteralString(_) = expr_ty {
             if ty == &Type::String {
-                return expr;
+                return;
+            }
+        }
+
+        fn inner_cast(expr: &mut Expr, ty: &Type) {
+            unsafe {
+                let e = Expr::Cast(Box::new(core::ptr::read(expr)), ty.clone());
+                core::ptr::write(expr, e);
             }
         }
 
         match &expr {
             Expr::Int(i) => match &ty {
-                Type::Number => return Expr::Number(*i as f64),
-                Type::Bool => return Expr::Bool(*i != 0),
-                Type::String => return Expr::String(i.to_string()),
-                _ => {}
+                Type::Number => *expr = Expr::Number(*i as f64),
+                Type::Bool => *expr = Expr::Bool(*i != 0),
+                Type::String => *expr = Expr::String(i.to_string()),
+                _ => inner_cast(expr, ty),
             },
             Expr::Bigint(i) => match &ty {
-                Type::Bool => return Expr::Bool(*i != 0),
-                Type::String => return Expr::String(i.to_string()),
-                _ => {}
+                Type::Bool => *expr = Expr::Bool(*i != 0),
+                Type::String => *expr = Expr::String(i.to_string()),
+                _ => inner_cast(expr, ty),
             },
             Expr::Bool(b) => match &ty {
-                Type::Number => return Expr::Number(if *b { 1.0 } else { 0.0 }),
-                Type::Bigint => return Expr::Bigint(if *b { 1 } else { 0 }),
-                Type::Int => return Expr::Int(if *b { 1 } else { 0 }),
-                Type::String => return Expr::String(b.to_string()),
-                _ => {}
+                Type::Number => *expr = Expr::Number(if *b { 1.0 } else { 0.0 }),
+                Type::Bigint => *expr = Expr::Bigint(if *b { 1 } else { 0 }),
+                Type::Int => *expr = Expr::Int(if *b { 1 } else { 0 }),
+                Type::String => *expr = Expr::String(b.to_string()),
+                _ => inner_cast(expr, ty),
             },
             Expr::Number(n) => match &ty {
-                Type::Int => return Expr::Int(*n as i32),
-                Type::Bigint => return Expr::Bigint(*n as i128),
-                Type::Bool => return Expr::Bool(!n.is_nan() && *n != 0.0),
-                Type::String => return Expr::String(n.to_string()),
-                _ => {}
+                Type::Int => *expr = Expr::Int(*n as i32),
+                Type::Bigint => *expr = Expr::Bigint(*n as i128),
+                Type::Bool => *expr = Expr::Bool(!n.is_nan() && *n != 0.0),
+                Type::String => *expr = Expr::String(n.to_string()),
+                _ => inner_cast(expr, ty),
             },
             Expr::String(s) => match &ty {
-                Type::Bool => return Expr::Bool(!s.is_empty()),
-                _ => {}
+                Type::Bool => *expr = Expr::Bool(!s.is_empty()),
+                _ => inner_cast(expr, ty),
             },
             Expr::Undefined => match &ty {
-                Type::Int => return Expr::Int(0),
-                Type::Number => return Expr::Number(0.0),
-                Type::Bigint => return Expr::Bigint(0),
-                Type::Bool => return Expr::Bool(false),
-                Type::String => return Expr::String("undefined".to_string()),
-                _ => {}
+                Type::Int => *expr = Expr::Int(0),
+                Type::Number => *expr = Expr::Number(0.0),
+                Type::Bigint => *expr = Expr::Bigint(0),
+                Type::Bool => *expr = Expr::Bool(false),
+                Type::String => *expr = Expr::String("undefined".to_string()),
+                _ => inner_cast(expr, ty),
             },
             Expr::Null => match &ty {
-                Type::Int => return Expr::Int(0),
-                Type::Number => return Expr::Number(0.0),
-                Type::Bigint => return Expr::Bigint(0),
-                Type::Bool => return Expr::Bool(false),
-                Type::String => return Expr::String("null".to_string()),
-                _ => {}
+                Type::Int => *expr = Expr::Int(0),
+                Type::Number => *expr = Expr::Number(0.0),
+                Type::Bigint => *expr = Expr::Bigint(0),
+                Type::Bool => *expr = Expr::Bool(false),
+                Type::String => *expr = Expr::String("null".to_string()),
+                _ => inner_cast(expr, ty),
             },
-            _ => {}
+            _ => inner_cast(expr, ty),
         }
-
-        return Expr::Cast(Box::new(expr), ty.clone());
     }
 
     /// translate a function type without translating its contents
@@ -359,7 +365,7 @@ impl Transformer {
                             // dynamic names are not allowed
                             return Err(Error::syntax_error(
                                 m.key.span(),
-                                "property of interface must be literal",
+                                "property name of interface must be literal",
                             ));
                         }
                         PropNameOrExpr::PropName(p) => p,
@@ -612,11 +618,9 @@ impl Transformer {
 
                 return Ok(ty);
             }
-            swc::TsType::TsLitType(l) => {
-                return Err(Error::syntax_error(l.span, "literal types not supported"))
-            }
+            swc::TsType::TsLitType(l) => return self.translate_literal_types(l),
             swc::TsType::TsMappedType(m) => {
-                return Err(Error::syntax_error(m.span, "mapped types not supported"))
+                return Err(Error::compiler_error(m.span, "mapped types not supported"))
             }
             swc::TsType::TsOptionalType(t) => {
                 let ty = self.translate_type(&t.type_ann)?;
@@ -625,7 +629,7 @@ impl Transformer {
             }
             swc::TsType::TsParenthesizedType(p) => return self.translate_type(&p.type_ann),
             swc::TsType::TsRestType(t) => {
-                return Err(Error::syntax_error(t.span, "rest type not supported"))
+                return Err(Error::compiler_error(t.span, "rest type not supported"))
             }
             swc::TsType::TsThisType(_) => return Ok(self.this_ty.clone()),
             swc::TsType::TsTupleType(t) => {
@@ -637,15 +641,14 @@ impl Transformer {
 
                 return Ok(Type::Tuple(tys.into_boxed_slice()));
             }
-            swc::TsType::TsTypeLit(l) => {
-                return Err(Error::syntax_error(l.span, "type literal not supported"))
-            }
+            swc::TsType::TsTypeLit(l) => return self.translate_literal_object_type(l),
             swc::TsType::TsTypeOperator(o) => {
                 let ty = self.translate_type(&o.type_ann)?;
 
                 match o.op {
                     swc::TsTypeOperatorOp::KeyOf => match ty {
                         Type::Map(k, _) => return Ok(*k),
+                        Type::Array(_) | Type::Tuple(_) => return Ok(Type::Number),
                         _ => {
                             return Err(Error::syntax_error(
                                 o.span,
@@ -893,6 +896,50 @@ impl Transformer {
                 }
             },
         }
+    }
+
+    pub fn translate_literal_types(&mut self, ty: &swc::TsLitType) -> Result<Type> {
+        match &ty.lit {
+            swc::TsLit::BigInt(i) => {
+                if let Some(i) = i.value.to_i128() {
+                    Ok(Type::LiteralBigint(i))
+                } else {
+                    Err(Error::compiler_error(ty.span, "i128 overflow"))
+                }
+            }
+            swc::TsLit::Bool(b) => Ok(Type::LiteralBool(b.value)),
+            swc::TsLit::Number(n) => {
+                if n.value as i32 as f64 == n.value {
+                    Ok(Type::LiteralInt(n.value as i32))
+                } else {
+                    Ok(Type::LiteralNumber(n.value))
+                }
+            }
+            swc::TsLit::Str(s) => Ok(Type::LiteralString(s.value.as_str().into())),
+            // todo: template string
+            swc::TsLit::Tpl(_) => Err(Error::compiler_error(
+                ty.span,
+                "template literal not supported",
+            )),
+        }
+    }
+
+    pub fn translate_literal_object_type(&mut self, ty: &swc::TsTypeLit) -> Result<Type> {
+        let mut members = Vec::new();
+
+        for member in &ty.members {
+            match member {
+                swc::TsTypeElement::TsPropertySignature(p) => {}
+                swc::TsTypeElement::TsMethodSignature(m) => {}
+                swc::TsTypeElement::TsGetterSignature(g) => {}
+                swc::TsTypeElement::TsSetterSignature(s) => {}
+                swc::TsTypeElement::TsIndexSignature(i) => {}
+                swc::TsTypeElement::TsCallSignatureDecl(c) => {}
+                swc::TsTypeElement::TsConstructSignatureDecl(c) => {}
+            }
+        }
+
+        return Ok(Type::LiteralObject(members.into_boxed_slice()));
     }
 
     pub fn translate_func_type(&mut self, func: &swc::TsFnOrConstructorType) -> Result<FuncType> {
@@ -1341,10 +1388,7 @@ impl Transformer {
                 }
             }
         }
-        return Err(Error::syntax_error(
-            span,
-            format!("type '' is not assignable to type ''"),
-        ));
+        return Err(Error::type_error(span, fulfills.clone(), ty.clone(), ""));
     }
 
     pub fn type_has_property(&self, ty: &Type, prop: &PropName, method: bool) -> Option<Type> {

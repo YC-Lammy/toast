@@ -29,6 +29,7 @@ pub struct ParsedModule {
 /// a set of parsed modules
 #[derive(Debug)]
 pub struct ParsedProgram {
+    pub entry: ModuleId,
     pub modules: HashMap<ModuleId, ParsedModule>,
 }
 
@@ -108,13 +109,14 @@ impl Parser {
             .new_source_file(swc_core::common::FileName::Custom(name), src);
 
         // parse the file
-        self.parse_file(PathBuf::new(), &file.src, file.start_pos, file.end_pos)?;
+        let entry = self.parse_file(PathBuf::new(), &file.src, file.start_pos, file.end_pos)?;
 
         // check if any cyclic dependency occoured
         self.check_cyclic_dependency()?;
 
         // return the parsed program
         return Ok(ParsedProgram {
+            entry: entry,
             modules: self.modules,
         });
     }
@@ -122,13 +124,14 @@ impl Parser {
     // parse a file from the gven path
     pub fn parse(mut self, main: PathBuf) -> Result<ParsedProgram, String> {
         // parse file as a module
-        self.parse_module(main)?;
+        let entry = self.parse_module(main)?;
 
         // check if any cyclic dependencies occoured
         self.check_cyclic_dependency()?;
 
         // return the parsed program
         return Ok(ParsedProgram {
+            entry: entry,
             modules: self.modules,
         });
     }

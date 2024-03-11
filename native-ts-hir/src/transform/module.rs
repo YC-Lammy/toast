@@ -6,7 +6,11 @@ use crate::{ast::ModuleExport, common::ModuleId};
 use super::{context::Binding, Transformer};
 
 impl Transformer {
-    pub fn find_binding_from_module(&mut self, id: ModuleId, name: &PropName) -> Option<Binding> {
+    pub(super) fn find_binding_from_module(
+        &mut self,
+        id: ModuleId,
+        name: &PropName,
+    ) -> Option<Binding> {
         let module_export = self.module_export(id, name)?;
 
         let bind = match module_export {
@@ -27,19 +31,30 @@ impl Transformer {
         return Some(bind);
     }
 
-    pub fn find_module(&mut self, name: &str) -> ModuleId {
+    pub(super) fn find_module(&mut self, name: &str) -> ModuleId {
         todo!()
     }
 
-    pub fn module_default_export(&self, module: ModuleId) -> ModuleExport {
-        todo!()
+    pub(super) fn module_default_export(&self, module: ModuleId) -> ModuleExport {
+        let m = self
+            .parsed_modules
+            .get(&module)
+            .expect("module not yet parsed");
+        return m.default_export.clone();
     }
 
-    pub fn module_export(&self, module: ModuleId, name: &PropName) -> Option<ModuleExport> {
-        todo!()
+    pub(super) fn module_export(&self, module: ModuleId, name: &PropName) -> Option<ModuleExport> {
+        let m = self
+            .parsed_modules
+            .get(&module)
+            .expect("module not yet parsed");
+        return m.exports.get(name).map(|e| e.clone());
     }
 
-    pub fn translate_module_export_name(&mut self, name: &swc::ModuleExportName) -> PropName {
+    pub(super) fn translate_module_export_name(
+        &mut self,
+        name: &swc::ModuleExportName,
+    ) -> PropName {
         match name {
             swc::ModuleExportName::Ident(id) => PropName::Ident(id.sym.to_string()),
             swc::ModuleExportName::Str(s) => PropName::String(s.value.to_string()),

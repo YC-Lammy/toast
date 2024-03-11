@@ -6,22 +6,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-#![feature(allocator_api)]
-#![feature(iter_collect_into)]
-#![feature(c_variadic)]
-#![feature(offset_of)]
-#![feature(core_intrinsics)]
 #![no_std]
 
 extern crate alloc;
 
 mod event_loop;
-mod coro;
-mod ecma;
-//mod rt;
-mod types;
-mod coroutine;
 mod allocator;
 mod runtime;
-mod unwinding;
-mod asynchronous;
+pub mod asynchronous;
+pub mod types;
+mod exception;
+pub mod gc;

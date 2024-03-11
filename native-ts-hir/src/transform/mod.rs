@@ -13,18 +13,18 @@ use std::{
 
 use context::*;
 
-use native_ts_common::error::Error;
 use native_ts_parser::swc_core::ecma::ast as swc;
 use native_ts_parser::{swc_core::common::Span, ParsedProgram};
 
+use crate::error::Error;
 use crate::{
-    ast::{self, Expr, Function, FunctionParam, ModuleExport, Stmt, Type},
+    ast::{self, Expr, Function, FunctionParam, ModuleExport, Program, Stmt, Type, VarKind},
     common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId},
     symbol_table::SymbolTable,
     PropName,
 };
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 /// span, ty, fulfills
 struct TypeCheck {
@@ -34,6 +34,7 @@ struct TypeCheck {
 }
 
 pub struct Transformer {
+    parsed_modules: HashMap<ModuleId, crate::ast::Module>,
     /// pended type checks tha cannot be done during translation
     type_checks: Vec<TypeCheck>,
     /// contains scope and definitions
@@ -54,6 +55,7 @@ pub struct Transformer {
 impl Transformer {
     pub fn new() -> Self {
         Self {
+            parsed_modules: HashMap::new(),
             type_checks: Vec::new(),
             context: Context::new(),
             break_labels: Default::default(),
@@ -67,35 +69,71 @@ impl Transformer {
     pub(crate) fn anonymous_name(&self) -> String {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        let mut buf = native_ts_common::itoa::Buffer::new();
+        let mut buf = itoa::Buffer::new();
 
         return "anonymous".to_string() + buf.format(COUNT.fetch_add(1, Ordering::SeqCst));
     }
 
-    pub fn transform_program(&mut self, program: &ParsedProgram) -> Result<crate::ast::Program> {
-        let mut parsed_modules = HashMap::new();
+    pub fn transform_program(mut self, program: &ParsedProgram) -> Result<crate::ast::Program> {
         for (id, m) in &program.modules {
-            let parsed_module = self.transform_module(&m.module, unsafe {
-                core::mem::transmute(m.dependencies.to_vec())
-            })?;
-
-            parsed_modules.insert(*id, parsed_module);
+            self.transform_module_with_dependencies(
+                &program.modules,
+                unsafe { core::mem::transmute(*id) },
+                &m.module,
+                unsafe { core::mem::transmute(m.dependencies.to_vec()) },
+            )?;
         }
 
-        todo!()
-        //return Ok(crate::ast::Program{
-        //    entry: {todo!()},
-        //    modules: parsed_modules
-        //})
+        return Ok(Program {
+            table: SymbolTable {
+                external_functions: Default::default(),
+                functions: core::mem::replace(&mut self.context.functions, Default::default()),
+                classes: core::mem::replace(&mut self.context.classes, Default::default()),
+                interfaces: core::mem::replace(&mut self.context.interfaces, Default::default()),
+                enums: core::mem::replace(&mut self.context.enums, Default::default()),
+            },
+            entry: unsafe { core::mem::transmute(program.entry) },
+            modules: self.parsed_modules,
+        });
     }
 
-    fn transform_module_with_dependencies(&mut self) {}
-
-    pub fn transform_module(
+    fn transform_module_with_dependencies(
         &mut self,
+        modules: &HashMap<native_ts_parser::ModuleId, native_ts_parser::ParsedModule>,
+        id: ModuleId,
         module: &swc::Module,
         dependencies: Vec<ModuleId>,
-    ) -> Result<crate::ast::Module> {
+    ) -> Result<()> {
+        // module already parsed
+        if self.parsed_modules.contains_key(&id) {
+            return Ok(());
+        }
+
+        for dep in &dependencies {
+            if !self.parsed_modules.contains_key(dep) {
+                let m = modules
+                    .get(unsafe { &*(dep as *const _ as *const native_ts_parser::ModuleId) })
+                    .expect("invalid module");
+                self.transform_module_with_dependencies(modules, *dep, &m.module, unsafe {
+                    core::mem::transmute(m.dependencies.to_vec())
+                })?;
+            }
+        }
+
+        // translate the module
+        let mut parsed = self.transform_module(module)?;
+        // write dependencies
+        parsed.dependencies = dependencies;
+        // insert module to registry
+        debug_assert!(
+            self.parsed_modules.insert(id, parsed).is_none(),
+            "module already parsed"
+        );
+
+        return Ok(());
+    }
+
+    fn transform_module(&mut self, module: &swc::Module) -> Result<crate::ast::Module> {
         let mut export_default = ModuleExport::Undefined;
         let mut module_exports = HashMap::new();
 
@@ -181,10 +219,11 @@ impl Transformer {
                     swc::ModuleDecl::ExportDefaultExpr(expr) => {
                         let varid = VariableId::new();
                         let (expr, ty) = self.translate_expr(&expr.expr, None)?;
-                        self.context
-                            .func()
-                            .stmts
-                            .push(Stmt::DeclareVar(varid, ty.clone()));
+                        self.context.func().stmts.push(Stmt::DeclareVar {
+                            kind: VarKind::Let,
+                            id: varid,
+                            ty: ty.clone(),
+                        });
                         self.context
                             .func()
                             .stmts
@@ -329,17 +368,10 @@ impl Transformer {
         let main = self.context.end_function();
 
         return Ok(ast::Module {
-            table: SymbolTable {
-                external_functions: Default::default(),
-                functions: core::mem::replace(&mut self.context.functions, Default::default()),
-                classes: core::mem::replace(&mut self.context.classes, Default::default()),
-                interfaces: core::mem::replace(&mut self.context.interfaces, Default::default()),
-                enums: core::mem::replace(&mut self.context.enums, Default::default()),
-            },
             main_function: main,
             default_export: export_default,
             exports: module_exports,
-            dependencies: dependencies,
+            dependencies: Vec::new(),
         });
     }
 
@@ -505,6 +537,7 @@ impl Transformer {
             self.context.functions.insert(
                 id,
                 Function {
+                    span: func.span,
                     is_async: func.is_async,
                     is_generator: func.is_generator,
                     this_ty: f.this_ty,

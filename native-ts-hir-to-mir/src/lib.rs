@@ -3,7 +3,7 @@ use native_ts_mir::types::{
     Type
 };
 
-use native_ts_hir::ast::Module;
+use native_ts_hir::ast as hir;
 
 
 pub struct Translator{
@@ -16,7 +16,7 @@ impl Translator{
         Self { context: ctx }
     }
 
-    pub fn translate(&self, module: &Module){
+    pub fn translate(&self, module: &hir::Program){
         
     }
 }

@@ -1,14 +1,16 @@
 /// HIR definitions
 pub mod ast;
-/// post transformation checks
-mod checks;
 /// utils
 mod common;
+/// post transformation passes
+pub mod passes;
 /// symbol table data structure
 mod symbol_table;
 /// transforms AST to HIR
 pub mod transform;
 
+/// error
+pub mod error;
 pub mod interpreter;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -82,7 +84,7 @@ impl core::fmt::Display for PropName {
                 f.write_str("\"")
             }
             Self::Int(i) => {
-                let mut buf = native_ts_common::itoa::Buffer::new();
+                let mut buf = itoa::Buffer::new();
                 f.write_str(buf.format(*i))
             }
             Self::Private(p) => {

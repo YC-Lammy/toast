@@ -64,6 +64,8 @@ enum StmtResult {
 struct Context {
     variables: HashMap<VariableId, Value>,
     heap_variables: HashMap<VariableId, Arc<RwLock<Value>>>,
+    using: Vec<VariableId>,
+    await_using: Vec<VariableId>,
 }
 
 impl Context {
@@ -71,6 +73,8 @@ impl Context {
         Self {
             variables: HashMap::new(),
             heap_variables: HashMap::new(),
+            using: Vec::new(),
+            await_using: Vec::new(),
         }
     }
     pub fn declare(&mut self, id: VariableId, is_heap: bool) {
@@ -123,10 +127,8 @@ impl Interpreter {
         Self {}
     }
     pub fn run(&self, program: &Program) -> Result<Value, Value> {
-        let entry = program.modules.get(&program.entry).expect("invalid module");
-
         let mut runner = InterpreterRunning {
-            table: &entry.table,
+            table: &program.table,
             modules: &program.modules,
 
             ran_modules: HashSet::new(),
@@ -226,17 +228,20 @@ impl<'a> InterpreterRunning<'a> {
 
         match self.run_stmts(&func.stmts, &mut cursor) {
             StmtResult::Ok => {
+                self.dispose_context();
                 // restore context
                 self.context = old_context;
             }
             StmtResult::Continue(_) => panic!("invalid continue"),
             StmtResult::Break(_) => panic!("invalid break"),
             StmtResult::Return(r) => {
+                self.dispose_context();
                 // restore context
                 self.context = old_context;
                 return Ok(r);
             }
             StmtResult::Error(e) => {
+                self.dispose_context();
                 // restore context
                 self.context = old_context;
                 return Err(e);
@@ -246,8 +251,70 @@ impl<'a> InterpreterRunning<'a> {
         return Ok(Value::Undefined);
     }
 
+    fn dispose_context(&mut self) {
+        for i in 0..self.context.using.len() {
+            let u = self.context.using[i];
+            let v = self
+                .context
+                .variables
+                .get(&u)
+                .expect("invalid variable")
+                .clone();
+            if let Some(dispose) = self.get_property(&v, &PropName::Symbol(Symbol::Dispose)) {
+                match dispose {
+                    Value::Function(id) => {
+                        let func = self.table.functions.get(&id).expect("invalid function");
+
+                        self.run_function(func, v, &[], Context::new());
+                    }
+                    Value::Clousure { id, captures } => {
+                        let func = self.table.functions.get(&id).expect("invalid function");
+
+                        let mut ctx = Context::new();
+                        for (vid, cap) in captures.iter() {
+                            ctx.heap_variables.insert(*vid, cap.clone());
+                        }
+
+                        self.run_function(func, v, &[], ctx);
+                    }
+                    _ => panic!("callee is not a function"),
+                }
+            }
+        }
+    }
+
+    fn end_scope<A: Fn(&Stmt) -> bool, B: Fn(&Stmt) -> bool>(
+        &mut self,
+        stmts: &[Stmt],
+        cursor: &mut usize,
+        open_scope: A,
+        end_scope: B,
+    ) {
+        // number of scopes opened
+        let mut i = 0;
+        loop {
+            let s = &stmts[*cursor];
+            *cursor += 1;
+
+            if end_scope(s) {
+                // no interior scope is present
+                if i == 0 {
+                    break;
+                } else {
+                    // decrement interier scope
+                    i -= 1;
+                }
+            };
+
+            // opens an interier scope
+            if open_scope(s) {
+                i += 1;
+            }
+        }
+    }
+
     fn run_stmts(&mut self, stmts: &[Stmt], cursor: &mut usize) -> StmtResult {
-        self.run_stmts_until(stmts, cursor, &|_| false)
+        self.run_stmts_until(stmts, cursor, |_| false)
     }
 
     #[inline(never)]
@@ -255,7 +322,7 @@ impl<'a> InterpreterRunning<'a> {
         &mut self,
         stmts: &[Stmt],
         cursor: &mut usize,
-        until: &dyn Fn(&Stmt) -> bool,
+        until: fn(&Stmt) -> bool,
     ) -> StmtResult {
         while *cursor < stmts.len() {
             let stmt = &stmts[*cursor];
@@ -265,9 +332,9 @@ impl<'a> InterpreterRunning<'a> {
                 return StmtResult::Ok;
             }
 
-            let re = match stmt {
+            match stmt {
                 Stmt::Block { label } => {
-                    let re = self.run_stmts_until(stmts, cursor, &|s| {
+                    let re = self.run_stmts_until(stmts, cursor, |s| {
                         if let Stmt::EndBlock = s {
                             true
                         } else {
@@ -344,9 +411,20 @@ impl<'a> InterpreterRunning<'a> {
                 | Stmt::DeclareInterface(_) => {
                     // do nothing
                 }
-                Stmt::DeclareVar(v, _) => {
+                Stmt::DeclareVar { kind, id, ty: _ } => {
                     // check if variable is already inserted
-                    assert!(self.context.contains(*v))
+                    assert!(self.context.contains(*id));
+
+                    // regester for dispose
+                    match kind {
+                        VarKind::Using => {
+                            self.context.using.push(*id);
+                        }
+                        VarKind::AwaitUsing => {
+                            self.context.await_using.push(*id);
+                        }
+                        _ => {}
+                    };
                 }
                 Stmt::DropVar(v) => {
                     assert!(self.context.remove(*v));
@@ -366,7 +444,7 @@ impl<'a> InterpreterRunning<'a> {
                         is_if_ran = true;
 
                         // run statement in clause
-                        let re = self.run_stmts_until(stmts, cursor, &|s| {
+                        let re = self.run_stmts_until(stmts, cursor, |s| {
                             if let Stmt::EndIf = s {
                                 true
                             } else {
@@ -381,28 +459,18 @@ impl<'a> InterpreterRunning<'a> {
                         }
                     } else {
                         // loop until end if is reached
-
-                        // counter for if scope opened
-                        let mut i = 0;
-                        loop {
-                            let s = &stmts[*cursor];
-                            *cursor += 1;
-
-                            if let Stmt::EndIf = s {
-                                // no interior scope is present
-                                if i == 0 {
-                                    break;
-                                } else {
-                                    // decrement interier scope
-                                    i -= 1;
-                                }
-                            };
-
-                            // opens an interier scope
-                            if let Stmt::If { .. } = s {
-                                i += 1;
-                            }
-                        }
+                        self.end_scope(
+                            stmts,
+                            cursor,
+                            |s| match s {
+                                Stmt::If { .. } => true,
+                                _ => false,
+                            },
+                            |s| match s {
+                                Stmt::EndIf => true,
+                                _ => false,
+                            },
+                        );
                     };
 
                     // run the else clause
@@ -411,7 +479,7 @@ impl<'a> InterpreterRunning<'a> {
 
                         // the revious conditions are not met, else clause should run
                         if !is_if_ran {
-                            let re = self.run_stmts_until(stmts, cursor, &|s| {
+                            let re = self.run_stmts_until(stmts, cursor, |s| {
                                 if let Stmt::EndElse = s {
                                     true
                                 } else {
@@ -425,28 +493,18 @@ impl<'a> InterpreterRunning<'a> {
                         } else {
                             // else clause should not run
                             // loop until end else is reached
-
-                            // counter for else scope opened
-                            let mut i = 0;
-                            loop {
-                                let s = &stmts[*cursor];
-                                *cursor += 1;
-
-                                if let Stmt::EndElse = s {
-                                    // no interior scope is present
-                                    if i == 0 {
-                                        break;
-                                    } else {
-                                        // decrement interier scope
-                                        i -= 1;
-                                    }
-                                };
-
-                                // opens an interier scope
-                                if let Stmt::Else = s {
-                                    i += 1;
-                                }
-                            }
+                            self.end_scope(
+                                stmts,
+                                cursor,
+                                |s| match s {
+                                    Stmt::Else { .. } => true,
+                                    _ => false,
+                                },
+                                |s| match s {
+                                    Stmt::EndElse => true,
+                                    _ => false,
+                                },
+                            );
                         }
                     };
                 }
@@ -472,7 +530,7 @@ impl<'a> InterpreterRunning<'a> {
                         let mut new_cursor = *cursor;
 
                         // execute statements within loop
-                        let re = self.run_stmts_until(stmts, &mut new_cursor, &|s| {
+                        let re = self.run_stmts_until(stmts, &mut new_cursor, |s| {
                             if let Stmt::EndLoop = s {
                                 true
                             } else {
@@ -532,7 +590,7 @@ impl<'a> InterpreterRunning<'a> {
                 }
                 Stmt::EndLoop => unreachable!(),
                 Stmt::Try => {
-                    let re = self.run_stmts_until(stmts, cursor, &|s| {
+                    let re = self.run_stmts_until(stmts, cursor, |s| {
                         if let Stmt::EndTry = s {
                             true
                         } else {
@@ -552,43 +610,33 @@ impl<'a> InterpreterRunning<'a> {
                     // an error means that endtry was not reached
                     if error.is_some() {
                         // loop until endtry is reached
-
-                        // counter for try scope opened
-                        let mut i = 0;
-                        loop {
-                            let s = &stmts[*cursor];
-                            *cursor += 1;
-
-                            if let Stmt::EndTry = s {
-                                // no interior scope is present
-                                if i == 0 {
-                                    break;
-                                } else {
-                                    // decrement interier scope
-                                    i -= 1;
-                                }
-                            };
-
-                            // opens an interier scope
-                            if let Stmt::Try = s {
-                                i += 1;
-                            }
-                        }
+                        self.end_scope(
+                            stmts,
+                            cursor,
+                            |s| match s {
+                                Stmt::Try => true,
+                                _ => false,
+                            },
+                            |s| match s {
+                                Stmt::EndTry => true,
+                                _ => false,
+                            },
+                        );
                     }
 
                     let mut error_in_catch = None;
 
-                    // run the catch clause if error occoured
-                    if let Some(error) = error {
-                        if let Some(Stmt::Catch(vid, ty)) = stmts.get(*cursor) {
-                            *cursor += 1;
+                    if let Some(Stmt::Catch(vid)) = stmts.get(*cursor) {
+                        *cursor += 1;
 
-                            let error = self.cast(&error, ty);
+                        // run the catch clause if error occoured
+                        if let Some(error) = error {
+                            let error = self.cast(&error, &Type::Any);
                             // insert binding
                             self.context.declare(*vid, false);
                             self.context.write(*vid, error);
 
-                            let re = self.run_stmts_until(stmts, cursor, &|s| {
+                            let re = self.run_stmts_until(stmts, cursor, |s| {
                                 if let Stmt::EndCatch = s {
                                     true
                                 } else {
@@ -603,13 +651,27 @@ impl<'a> InterpreterRunning<'a> {
                                 }
                                 _ => return re,
                             }
+                        } else {
+                            // no error occoured, end catch
+                            self.end_scope(
+                                stmts,
+                                cursor,
+                                |s| match s {
+                                    Stmt::Catch(_) => true,
+                                    _ => false,
+                                },
+                                |s| match s {
+                                    Stmt::EndCatch => true,
+                                    _ => false,
+                                },
+                            );
                         }
                     }
 
                     // run the finaliser no matter what
                     if let Some(Stmt::Finally) = stmts.get(*cursor) {
                         *cursor += 1;
-                        let re = self.run_stmts_until(stmts, cursor, &|s| {
+                        let re = self.run_stmts_until(stmts, cursor, |s| {
                             if let Stmt::EndFinally = s {
                                 true
                             } else {
@@ -629,7 +691,7 @@ impl<'a> InterpreterRunning<'a> {
                     };
                 }
                 Stmt::EndTry => unreachable!(),
-                Stmt::Catch(_, _) => unreachable!(),
+                Stmt::Catch(_) => unreachable!(),
                 Stmt::EndCatch => unreachable!(),
                 Stmt::Finally => unreachable!(),
                 Stmt::EndFinally => unreachable!(),
@@ -660,7 +722,7 @@ impl<'a> InterpreterRunning<'a> {
                         // if case is matched, execute statements
                         // this may be an effect of fallthrough
                         if is_case_matched {
-                            let re = self.run_stmts_until(stmts, cursor, &|s| {
+                            let re = self.run_stmts_until(stmts, cursor, |s| {
                                 if let Stmt::EndSwitchCase = s {
                                     true
                                 } else {
@@ -681,38 +743,29 @@ impl<'a> InterpreterRunning<'a> {
                                 _ => return re,
                             };
                         } else {
-                            // case is not matched, loop until end switch is reached
+                            // case is not matched, loop until end switch case is reached
 
-                            // counter for switch case scope opened
-                            let mut i = 0;
-                            loop {
-                                let s = &stmts[*cursor];
-                                *cursor += 1;
-
-                                if let Stmt::EndSwitchCase = s {
-                                    // no interior scope is present
-                                    if i == 0 {
-                                        break;
-                                    } else {
-                                        // decrement interier scope
-                                        i -= 1;
-                                    }
-                                };
-
-                                // opens an interier scope
-                                if let Stmt::SwitchCase(_) = s {
-                                    i += 1;
-                                }
-                            }
+                            self.end_scope(
+                                stmts,
+                                cursor,
+                                |s| match s {
+                                    Stmt::SwitchCase(_) => true,
+                                    _ => false,
+                                },
+                                |s| match s {
+                                    Stmt::EndSwitchCase => true,
+                                    _ => false,
+                                },
+                            );
                         }
                     }
 
                     // run the default case if no case is matched
-                    if !is_case_matched {
-                        if let Some(Stmt::DefaultCase) = stmts.get(*cursor) {
-                            *cursor += 1;
+                    if let Some(Stmt::DefaultCase) = stmts.get(*cursor) {
+                        *cursor += 1;
 
-                            let re = self.run_stmts_until(stmts, cursor, &|s| {
+                        if !is_case_matched {
+                            let re = self.run_stmts_until(stmts, cursor, |s| {
                                 if let Stmt::EndDefaultCase = s {
                                     true
                                 } else {
@@ -724,32 +777,36 @@ impl<'a> InterpreterRunning<'a> {
                                 StmtResult::Ok => {}
                                 _ => return re,
                             }
+                        } else {
+                            self.end_scope(
+                                stmts,
+                                cursor,
+                                |s| match s {
+                                    Stmt::DefaultCase => true,
+                                    _ => false,
+                                },
+                                |s| match s {
+                                    Stmt::EndDefaultCase => true,
+                                    _ => false,
+                                },
+                            );
                         }
                     };
 
                     // loop until switch end
 
-                    // counter for switch scope opened
-                    let mut i = 0;
-                    loop {
-                        let s = &stmts[*cursor];
-                        *cursor += 1;
-
-                        if let Stmt::EndSwitch = s {
-                            // no interior scope is present
-                            if i == 0 {
-                                break;
-                            } else {
-                                // decrement interier scope
-                                i -= 1;
-                            }
-                        };
-
-                        // opens an interier scope
-                        if let Stmt::Switch(_) = s {
-                            i += 1;
-                        }
-                    }
+                    self.end_scope(
+                        stmts,
+                        cursor,
+                        |s| match s {
+                            Stmt::Switch(_) => true,
+                            _ => false,
+                        },
+                        |s| match s {
+                            Stmt::EndSwitch => true,
+                            _ => false,
+                        },
+                    );
                 }
                 Stmt::EndSwitch => unreachable!(),
                 Stmt::SwitchCase(_) => unreachable!(),
@@ -774,7 +831,7 @@ impl<'a> InterpreterRunning<'a> {
             Expr::Symbol(s) => Ok(Value::Symbol(*s)),
             Expr::Regex() => Ok(Value::Regex()),
             Expr::Function(f) => Ok(Value::Function(*f)),
-            Expr::This => Ok(self.this.clone()),
+            Expr::This(_) => Ok(self.this.clone()),
             Expr::Array { values } => {
                 let mut array = Vec::new();
                 for v in values {
@@ -806,10 +863,18 @@ impl<'a> InterpreterRunning<'a> {
                 optional,
             } => {
                 let (this, mut callee) = match callee.as_ref() {
-                    Callee::Expr(e) => (self.this.clone(), self.run_expr(e)?),
-                    Callee::Function(f) => (self.this.clone(), Value::Function(*f)),
+                    Callee::Expr(e) => (self.this.clone(), Some(self.run_expr(e)?)),
+                    Callee::Function(f) => (self.this.clone(), Some(Value::Function(*f))),
                     Callee::Member { object, prop } => {
-                        todo!()
+                        let obj = self.run_expr(object)?;
+                        let method = match prop {
+                            PropNameOrExpr::PropName(p) => self.get_property(&obj, p),
+                            PropNameOrExpr::Expr(e, _) => {
+                                let p = self.run_expr(e)?;
+                                self.get_property_expr(&obj, &p)?
+                            }
+                        };
+                        (obj, method)
                     }
                     Callee::Super(s) => {
                         todo!()
@@ -823,19 +888,23 @@ impl<'a> InterpreterRunning<'a> {
                 }
 
                 if *optional {
-                    match self.assert_not_null(callee) {
-                        Ok(v) => callee = v,
-                        Err(_) => return Ok(Value::Undefined),
+                    if let Some(c) = &callee {
+                        match self.assert_not_null(c.clone()) {
+                            Ok(v) => callee = Some(v),
+                            Err(_) => return Ok(Value::Undefined),
+                        }
+                    } else {
+                        return Ok(Value::Undefined);
                     }
                 }
 
                 match callee {
-                    Value::Function(id) => {
+                    Some(Value::Function(id)) => {
                         let func = self.table.functions.get(&id).expect("invalid function");
 
                         return self.run_function(func, this, &arguments, Context::new());
                     }
-                    Value::Clousure { id, captures } => {
+                    Some(Value::Clousure { id, captures }) => {
                         let func = self.table.functions.get(&id).expect("invalid function");
 
                         let mut ctx = Context::new();

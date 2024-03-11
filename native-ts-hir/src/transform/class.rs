@@ -1,6 +1,4 @@
-use native_ts_common::error::Error;
-
-use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::common::Spanned;
 use native_ts_parser::swc_core::ecma::ast as swc;
 
 use super::Transformer;
@@ -9,9 +7,10 @@ use crate::ast::{
     ClassType, Expr, FuncType, FunctionParam, PropNameOrExpr, PropertyDesc, Stmt, Type,
 };
 use crate::common::{ClassId, FunctionId, VariableId};
+use crate::error::Error;
 use crate::transform::context::Binding;
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 impl Transformer {
     /// this function only translates type definitions and does not translate any initialiser or methods
@@ -180,6 +179,7 @@ impl Transformer {
                         class_ty.properties.insert(
                             name,
                             PropertyDesc {
+                                span: prop.span,
                                 ty: ty,
                                 readonly: prop.readonly,
                                 initialiser: None,
@@ -355,6 +355,7 @@ impl Transformer {
                         class_ty.properties.insert(
                             name,
                             PropertyDesc {
+                                span: prop.span,
                                 ty: ty,
                                 readonly: prop.readonly,
                                 initialiser: init,
@@ -403,6 +404,7 @@ impl Transformer {
                         class_ty.properties.insert(
                             name,
                             PropertyDesc {
+                                span: prop.span,
                                 ty: ty,
                                 readonly: prop.readonly,
                                 initialiser: init,
@@ -429,7 +431,11 @@ impl Transformer {
                     let old_return = core::mem::replace(&mut self.return_ty, Type::Undefined);
                     let old_is_constructor = core::mem::replace(&mut self.is_in_constructor, true);
 
-                    self.context.new_function(constructor_id, false, false);
+                    let is_hoisted =
+                        self.context
+                            .open_function(c.span, constructor_id, false, false);
+
+                    assert!(!is_hoisted, "constructor should not be hoisted");
 
                     // translate params
                     for p in &c.params {

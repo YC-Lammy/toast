@@ -3,7 +3,7 @@ use crate::{
     PropName,
 };
 
-use super::{Callee, Expr, Module, PropNameOrExpr, Stmt, Type, UnaryOp, UpdateOp};
+use super::{Callee, Expr, Module, PropNameOrExpr, Stmt, Type, UnaryOp, UpdateOp, VarKind};
 use crate::symbol_table::SymbolTable;
 
 pub struct Formatter<'a> {
@@ -118,13 +118,14 @@ impl<'a> Formatter<'a> {
                     if let Some(init) = &prop.initialiser {
                         self.write_str("=");
                         self.format_expr(init);
-                        self.write_str(";\n");
                     }
+
+                    self.write_str(";\n");
                 }
 
                 for (name, (id, _)) in &class.static_methods {
                     self.emit_spaces();
-                    self.write_str("static function ");
+                    self.write_str("static ");
                     self.format_propname(name);
                     self.format_function_body(*id);
                 }
@@ -213,9 +214,16 @@ impl<'a> Formatter<'a> {
                 self.close_scope();
                 self.write_str("}\n");
             }
-            Stmt::DeclareVar(id, ty) => {
+            Stmt::DeclareVar { kind, id, ty } => {
                 self.emit_spaces();
-                self.write_str("var var");
+                self.write_str(match kind {
+                    VarKind::Var => "var",
+                    VarKind::Let => "let",
+                    VarKind::Const => "const",
+                    VarKind::Using => "using",
+                    VarKind::AwaitUsing => "await using",
+                });
+                self.write_str(" var");
                 self.write_int(id.0);
                 self.write_str(":");
                 self.format_ty(ty);
@@ -306,12 +314,10 @@ impl<'a> Formatter<'a> {
                 self.emit_spaces();
                 self.write_str("}\n");
             }
-            Stmt::Catch(id, ty) => {
+            Stmt::Catch(id) => {
                 self.emit_spaces();
                 self.write_str("catch (");
                 self.write_var(*id);
-                self.write_str(":");
-                self.format_ty(ty);
                 self.write_str("){\n");
                 self.new_scope();
             }
@@ -374,7 +380,7 @@ impl<'a> Formatter<'a> {
 
     fn write_var(&mut self, id: VariableId) {
         self.write_str("var");
-        let mut buf = native_ts_common::itoa::Buffer::new();
+        let mut buf = itoa::Buffer::new();
         self.write_str(buf.format(id.0));
     }
 
@@ -679,7 +685,7 @@ impl<'a> Formatter<'a> {
                 self.write_str(":");
                 self.format_expr(&right);
             }
-            Expr::This => self.write_str("this"),
+            Expr::This(_) => self.write_str("this"),
             Expr::Tuple { values } => {
                 self.write_str("[");
 

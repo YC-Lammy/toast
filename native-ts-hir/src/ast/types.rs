@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use native_ts_parser::swc_core::common::Span;
+
 use crate::common::{AliasId, ClassId, EnumId, FunctionId, GenericId, InterfaceId, VariableId};
 use crate::{PropName, Symbol};
 
@@ -275,6 +277,7 @@ pub struct GenericParam {
 /// an object property descriptor
 #[derive(Debug, Clone)]
 pub struct PropertyDesc {
+    pub span: Span,
     /// type of property
     pub ty: Type,
     /// is property readonly

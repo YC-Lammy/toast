@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use native_ts_parser::swc_core::common::{Span, DUMMY_SP};
+
 use crate::ast::*;
 use crate::common::{
     AliasId, ClassId, EnumId, FunctionId, GenericId, InterfaceId, ModuleId, VariableId,
@@ -102,6 +104,7 @@ impl Context {
         s.functions.insert(
             function_id,
             Function {
+                span: DUMMY_SP,
                 is_async: false,
                 is_generator: false,
                 this_ty: Type::Any,
@@ -115,7 +118,14 @@ impl Context {
         return s;
     }
 
-    pub fn new_function(&mut self, id: FunctionId, is_async: bool, is_generaor: bool) {
+    /// returns true if function is hoisted
+    pub fn open_function(
+        &mut self,
+        span: Span,
+        id: FunctionId,
+        is_async: bool,
+        is_generaor: bool,
+    ) -> bool {
         self.scopes.push(Scope {
             function_id: id,
             bindings: HashMap::new(),
@@ -125,6 +135,7 @@ impl Context {
             self.functions.insert(
                 id,
                 Function {
+                    span: span,
                     is_async: is_async,
                     is_generator: is_generaor,
                     this_ty: Type::Any,
@@ -135,6 +146,10 @@ impl Context {
                     stmts: Vec::new(),
                 },
             );
+
+            return false;
+        } else {
+            return true;
         }
     }
 

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use native_ts_parser::swc_core::common::Span;
+
 use crate::common::VariableId;
 
 use super::{FuncType, GenericParam};
@@ -16,6 +18,7 @@ pub struct FunctionParam {
 }
 
 pub struct Function {
+    pub span: Span,
     pub is_async: bool,
     pub is_generator: bool,
     pub this_ty: Type,

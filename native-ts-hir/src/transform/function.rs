@@ -1,7 +1,9 @@
-use native_ts_common::error::Error;
-use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::common::Spanned;
 use native_ts_parser::swc_core::ecma::ast as swc;
 
+use crate::ast::FunctionParam;
+use crate::common::VariableId;
+use crate::error::Error;
 use crate::{
     ast::{Expr, FuncType, Stmt, Type},
     common::FunctionId,
@@ -10,10 +12,10 @@ use crate::{
 
 use super::Transformer;
 
-type Result<T> = std::result::Result<T, Error<Span>>;
+type Result<T> = std::result::Result<T, Error>;
 
 impl Transformer {
-    pub fn translate_arrow(
+    pub(super) fn translate_arrow(
         &mut self,
         func: &swc::ArrowExpr,
         expected: Option<&FuncType>,
@@ -52,8 +54,11 @@ impl Transformer {
             None => None,
         };
 
-        self.context
-            .new_function(id, func.is_async, func.is_generator);
+        let is_hoisted =
+            self.context
+                .open_function(func.span, id, func.is_async, func.is_generator);
+
+        assert!(!is_hoisted, "arrow function should not be hoisted");
 
         match func.body.as_ref() {
             swc::BlockStmtOrExpr::Expr(e) => {
@@ -107,14 +112,15 @@ impl Transformer {
         return Ok((Expr::Closure(id), Type::Function(Box::new(func_ty))));
     }
 
-    pub fn translate_function(
+    pub(super) fn translate_function(
         &mut self,
         id: FunctionId,
         class_this_ty: Option<Type>,
         func: &swc::Function,
     ) -> Result<()> {
-        self.context
-            .new_function(id, func.is_async, func.is_generator);
+        let is_hoisted =
+            self.context
+                .open_function(func.span, id, func.is_async, func.is_generator);
 
         let mut this_ty = Type::Any;
 
@@ -124,8 +130,33 @@ impl Transformer {
 
         for (i, p) in func.params.iter().enumerate() {
             if let Some(ident) = p.pat.as_ident() {
-                let id = self.context.func().params[i].id;
-                let ty = self.context.func().params[i].ty.clone();
+                let (id, ty) = if is_hoisted {
+                    (
+                        self.context.func().params[i].id,
+                        self.context.func().params[i].ty.clone(),
+                    )
+                } else {
+                    let id = VariableId::new();
+                    let ty = if let Some(ann) = &ident.type_ann {
+                        // translate the type annotation
+                        let ty = self.translate_type(&ann.type_ann)?;
+
+                        if ident.optional {
+                            ty.union(Type::Undefined)
+                        } else {
+                            ty
+                        }
+                    } else {
+                        return Err(Error::syntax_error(ident.span, "missing type annotation"));
+                    };
+
+                    self.context.func().params.push(FunctionParam {
+                        id: id,
+                        ty: ty.clone(),
+                    });
+
+                    (id, ty)
+                };
 
                 // declare binding
                 self.context.declare(

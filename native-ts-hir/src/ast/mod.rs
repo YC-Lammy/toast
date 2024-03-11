@@ -39,8 +39,6 @@ pub enum ModuleExport {
 }
 
 pub struct Module {
-    /// symbol table
-    pub table: SymbolTable,
     /// the unique function id of the entry function
     pub main_function: FunctionId,
     /// default export
@@ -52,6 +50,7 @@ pub struct Module {
 }
 
 pub struct Program {
+    pub table: SymbolTable,
     pub entry: ModuleId,
     pub modules: HashMap<ModuleId, Module>,
 }
