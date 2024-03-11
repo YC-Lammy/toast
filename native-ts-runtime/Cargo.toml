@@ -23,7 +23,7 @@ lazy_static = "*"
 parking_lot = "*"
 num-bigint = "*"
 
-lazy_thread_local = "0.1.1"
+lazy_thread_local = "0.1.2"
 
 
 libc = "*"
