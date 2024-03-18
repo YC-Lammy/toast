@@ -1,13 +1,14 @@
 use core::marker::PhantomData;
 
 use crate::{
+    backend::Backend,
     function::Function,
     types::{
         aggregate::{AggregateDesc, InterfaceDesc},
         FunctionType,
     },
     util::{AggregateID, FunctionID, InterfaceID},
-    Type, backend::Backend,
+    Type,
 };
 
 #[repr(C)]
@@ -29,7 +30,7 @@ pub enum Linkage {
     /// export to dll
     DLLExport,
     /// import from dll
-    DLLImport
+    DLLImport,
 }
 
 pub(crate) struct FunctionDesc<'ctx> {
@@ -42,7 +43,7 @@ pub(crate) struct FunctionDesc<'ctx> {
     pub(crate) linkage: Option<Linkage>,
 }
 
-pub struct GeneratorDesc<'ctx>{
+pub struct GeneratorDesc<'ctx> {
     pub resume_type: Type<'ctx>,
     pub yield_type: Type<'ctx>,
 }
@@ -67,12 +68,12 @@ impl Context {
     /// define an aggregate type
     pub fn declare_aggregate<'ctx>(&mut self, desc: AggregateDesc<'ctx>) -> AggregateID {
         // check if aggregate already declared
-        for (i, agg) in self.aggregates.iter().enumerate(){
-            if agg.hash == desc.hash{
-                return AggregateID{
+        for (i, agg) in self.aggregates.iter().enumerate() {
+            if agg.hash == desc.hash {
+                return AggregateID {
                     id: i,
-                    _mark: PhantomData
-                }
+                    _mark: PhantomData,
+                };
             }
         }
 
@@ -80,7 +81,7 @@ impl Context {
         let id = self.aggregates.len();
         // push aggregate
         self.aggregates.push(unsafe { core::mem::transmute(desc) });
-        
+
         return AggregateID {
             id: id,
             _mark: PhantomData,
@@ -95,12 +96,12 @@ impl Context {
     /// define an interface type
     pub fn declare_interface<'ctx>(&'ctx mut self, desc: InterfaceDesc<'ctx>) -> InterfaceID {
         // check if interface already declared
-        for (i, iface) in self.interfaces.iter().enumerate(){
-            if iface.hash == desc.hash{
-                return InterfaceID{
+        for (i, iface) in self.interfaces.iter().enumerate() {
+            if iface.hash == desc.hash {
+                return InterfaceID {
                     id: i,
-                    _mark: PhantomData
-                }
+                    _mark: PhantomData,
+                };
             }
         }
 
@@ -135,7 +136,7 @@ impl Context {
         self.functions.push(FunctionDesc {
             name: name.map(|s| s.into()),
             is_async: is_async,
-            is_generator: unsafe{core::mem::transmute(is_generator)},
+            is_generator: unsafe { core::mem::transmute(is_generator) },
             function: None,
             ty: unsafe {
                 core::mem::transmute(FunctionType {
@@ -143,7 +144,7 @@ impl Context {
                     return_: return_ty,
                 })
             },
-            linkage
+            linkage,
         });
         return FunctionID {
             id: id,
@@ -153,58 +154,68 @@ impl Context {
 
     /// define a function
     pub fn define_function<'ctx>(&'ctx mut self, id: FunctionID<'ctx>, func: Function<'ctx>) {
-        if let Some(desc) = self.functions.get_mut(id.id){
-            if desc.is_async != func.is_async{
+        if let Some(desc) = self.functions.get_mut(id.id) {
+            if desc.is_async != func.is_async {
                 panic!("function is not async but declared as async")
             }
-            if let Some(gen) = &desc.is_generator{
-                if let Some(fgen) = &func.is_generator{
-                    if fgen.resume_type != gen.resume_type{
+            if let Some(gen) = &desc.is_generator {
+                if let Some(fgen) = &func.is_generator {
+                    if fgen.resume_type != gen.resume_type {
                         panic!("generator resume type mismatch")
                     }
-                    if fgen.yield_type != gen.yield_type{
+                    if fgen.yield_type != gen.yield_type {
                         panic!("generator yield type mismatch")
                     }
-                } else{
+                } else {
                     panic!("function is not generator but declared as generator")
                 }
             }
-            if desc.ty.params.as_ref() != &func.params{
+            if desc.ty.params.as_ref() != &func.params {
                 panic!("function params does not match")
             }
-            if desc.ty.return_ != func.return_{
+            if desc.ty.return_ != func.return_ {
                 panic!("function return type mismatch")
             }
-            desc.function = Some(unsafe{core::mem::transmute(func)});
-        } else{
+            desc.function = Some(unsafe { core::mem::transmute(func) });
+        } else {
             panic!("invalid function id")
         }
     }
 
     /// get the function if defined
     pub fn get_function<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> Option<&'ctx Function> {
-        self.functions.get(id.id).expect("invalid function id").function.as_ref()
+        self.functions
+            .get(id.id)
+            .expect("invalid function id")
+            .function
+            .as_ref()
     }
 
     /// get the function if defined
-    pub fn get_function_by_name<'ctx>(&'ctx self, name: &str) -> Option<&'ctx Function>{
-        for f in &self.functions{
-            if let Some(n) = &f.name{
-                if name == n{
-                    return f.function.as_ref()
+    pub fn get_function_by_name<'ctx>(&'ctx self, name: &str) -> Option<&'ctx Function> {
+        for f in &self.functions {
+            if let Some(n) = &f.name {
+                if name == n {
+                    return f.function.as_ref();
                 }
             }
         }
 
-        return None
+        return None;
     }
 
     pub fn get_function_type<'ctx>(&'ctx self, id: FunctionID<'ctx>) -> &'ctx FunctionType {
         &self.functions.get(id.id).expect("invalid function id").ty
     }
 
-    pub fn create_function<'ctx>(&'ctx self, params: &[Type<'ctx>], return_ty: Type<'ctx>, is_async: bool, is_generator: Option<GeneratorDesc<'ctx>>) -> Function{
-        Function{
+    pub fn create_function<'ctx>(
+        &'ctx self,
+        params: &[Type<'ctx>],
+        return_ty: Type<'ctx>,
+        is_async: bool,
+        is_generator: Option<GeneratorDesc<'ctx>>,
+    ) -> Function {
+        Function {
             params: params.to_vec(),
             return_: return_ty,
             is_async,
@@ -212,11 +223,11 @@ impl Context {
             map_ssa_func: Vec::new(),
             blocks: Vec::new(),
             stackslots: Vec::new(),
-            _mark: PhantomData
+            _mark: PhantomData,
         }
     }
 
-    pub fn compile<B: Backend>(&self, mut backend: B) -> Result<B::Output, String>{
+    pub fn compile<B: Backend>(&self, mut backend: B) -> Result<B::Output, String> {
         backend.compile(self)
     }
 }

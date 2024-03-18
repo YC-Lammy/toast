@@ -63,7 +63,7 @@ pub struct SwitchCase {
 pub enum MIR<'ctx> {
     /// read param
     ReadParam(usize, ValueID),
-    
+
     Uconst(u128, ValueID),
     Iconst(i128, ValueID),
     F64const(f64, ValueID),
@@ -218,20 +218,34 @@ pub enum MIR<'ctx> {
         args: Box<[ValueID]>,
         return_: ValueID,
     },
+    Invoke {
+        id: FunctionID<'ctx>,
+        args: Box<[ValueID]>,
+        return_: ValueID,
+        then_block: BlockID,
+        catch_block: BlockID,
+    },
+    InvokeIndirect {
+        func: ValueID,
+        args: Box<[ValueID]>,
+        return_: ValueID,
+        then_block: BlockID,
+        catch_block: BlockID,
+    },
 
     /// allocate a smart pointer
     Malloc(ValueID, ValueID),
     /// if memory management is manual, free the pointer.
     /// otherwise, this is noop
     Free(ValueID),
-    
+
     /// await for a future
     AsyncAwait(ValueID, ValueID),
     /// yield from a generator and wait for resume
     Yield(ValueID, ValueID),
 
     /// generator, resume, result
-    /// 
+    ///
     /// returns an enum of yield type or return type
     GeneratorNext(ValueID, ValueID, ValueID),
 }

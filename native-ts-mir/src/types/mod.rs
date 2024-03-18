@@ -156,7 +156,7 @@ impl<'ctx> IntoMarkerType<'ctx> for Type<'ctx> {
 }
 
 pub trait FieldedMarkerType<'ctx>: MarkerType<'ctx> {}
-pub trait PointerMarkerType<'ctx, T: MarkerType<'ctx>>: MarkerType<'ctx>{
+pub trait PointerMarkerType<'ctx, T: MarkerType<'ctx>>: MarkerType<'ctx> {
     fn pointee(&self) -> &T;
 }
 
@@ -566,7 +566,7 @@ where
         Type::Pointer(Box::new(self.pointee.to_type()))
     }
 }
-impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Pointer<T>{
+impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Pointer<T> {
     fn pointee(&self) -> &T {
         &self.pointee
     }
@@ -588,7 +588,7 @@ where
     }
 }
 
-impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Smart<T>{
+impl<'ctx, T: MarkerType<'ctx>> PointerMarkerType<'ctx, T> for Smart<T> {
     fn pointee(&self) -> &T {
         &self.pointee
     }
@@ -708,18 +708,18 @@ impl<const N: usize> FloatMathMarkerType for SIMD<F32, N> where
 }
 
 #[derive(Clone)]
-pub struct Enum<'ctx, V: FunctionArgs<'ctx> = AutoArgs<'ctx>>{
+pub struct Enum<'ctx, V: FunctionArgs<'ctx> = AutoArgs<'ctx>> {
     pub variants: V,
-    pub _mark: PhantomData<&'ctx ()>
+    pub _mark: PhantomData<&'ctx ()>,
 }
 
-impl<'ctx, V: FunctionArgs<'ctx>> seal::Sealed for Enum<'ctx, V>{}
+impl<'ctx, V: FunctionArgs<'ctx>> seal::Sealed for Enum<'ctx, V> {}
 
-impl<'ctx, V: FunctionArgs<'ctx>> MarkerType<'ctx> for Enum<'ctx, V>{
+impl<'ctx, V: FunctionArgs<'ctx>> MarkerType<'ctx> for Enum<'ctx, V> {
     fn to_type(&self) -> Type<'ctx> {
         let mut v = Vec::new();
 
-        for i in 0..self.variants.len(){
+        for i in 0..self.variants.len() {
             v.push(self.variants.get(i))
         }
         Type::Enum(v.into_boxed_slice())

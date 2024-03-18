@@ -288,7 +288,11 @@ impl<'a> Formatter<'a> {
                 self.write_str("break;");
                 self.close_scope();
             }
-            Stmt::Loop { label } => {
+            Stmt::Loop {
+                label,
+                update,
+                end_check,
+            } => {
                 self.emit_spaces();
 
                 if let Some(label) = label {
@@ -296,7 +300,14 @@ impl<'a> Formatter<'a> {
                     self.write_str(":");
                 }
 
-                self.write_str("for (;;){\n");
+                if let Some(update) = update {
+                    self.write_str("for (;;");
+                    self.format_expr(&update);
+                    self.write_str("){\n");
+                } else {
+                    self.write_str("for (;;){\n");
+                }
+
                 self.new_scope();
             }
             Stmt::EndLoop => {

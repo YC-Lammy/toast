@@ -150,8 +150,12 @@ impl<'ctx, 'func, T: MarkerType<'ctx>> Value<'ctx, 'func, T> {
     }
 }
 
-impl<'ctx, 'func> Value<'ctx, 'func, Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>>{
-    pub fn into_function<A: FunctionArgs<'ctx>, R: MarkerType<'ctx>>(&self, args: A, return_: R) -> Value<'ctx, 'func, Function<'ctx, A, R>>{
+impl<'ctx, 'func> Value<'ctx, 'func, Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>> {
+    pub fn into_function<A: FunctionArgs<'ctx>, R: MarkerType<'ctx>>(
+        &self,
+        args: A,
+        return_: R,
+    ) -> Value<'ctx, 'func, Function<'ctx, A, R>> {
         if self.ty.args.len() != args.len() {
             panic!("value is function, but wrong number of arguments provided")
         }
@@ -294,21 +298,29 @@ impl<'ctx, 'func> Value<'ctx, 'func, Auto<'ctx>> {
         }
         panic!("value is not future")
     }
-    pub fn into_generator<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>>(&self, yield_ty: Y, resume_ty: RE, return_ty: R) -> Value<'ctx, 'func, Generator<Y, RE, R>> {
+    pub fn into_generator<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>>(
+        &self,
+        yield_ty: Y,
+        resume_ty: RE,
+        return_ty: R,
+    ) -> Value<'ctx, 'func, Generator<Y, RE, R>> {
         if let Type::Generator(gen) = &self.ty.inner {
-            if &gen.0 != &yield_ty.to_type() || &gen.1 != &resume_ty.to_type() || &gen.2 != &return_ty.to_type(){
+            if &gen.0 != &yield_ty.to_type()
+                || &gen.1 != &resume_ty.to_type()
+                || &gen.2 != &return_ty.to_type()
+            {
                 panic!("value is generator but type does not match")
             }
 
-            return Value{
+            return Value {
                 id: self.id,
-                ty: Generator { 
-                    yield_: yield_ty, 
-                    resume: resume_ty, 
-                    return_: return_ty 
+                ty: Generator {
+                    yield_: yield_ty,
+                    resume: resume_ty,
+                    return_: return_ty,
                 },
-                _mark: PhantomData
-            }
+                _mark: PhantomData,
+            };
         }
         panic!("value is not generator")
     }

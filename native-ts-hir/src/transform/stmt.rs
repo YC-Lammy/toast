@@ -10,6 +10,7 @@ use crate::{
     PropName,
 };
 
+use super::expr::MaybeTranslatedExpr;
 use super::{context::Binding, Transformer};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -35,6 +36,7 @@ impl Transformer {
             swc::Stmt::Continue(c) => {
                 // check for label
                 if let Some(label) = &c.label {
+                    // no label found
                     if !self.continue_labels.contains(label.sym.as_ref()) {
                         return Err(Error::syntax_error(label.span, "undefined label"));
                     }
@@ -100,21 +102,23 @@ impl Transformer {
         block: &swc::BlockStmt,
         label: Option<&str>,
     ) -> Result<()> {
+        // true if the label is shared with parent scope
         let mut old_break = false;
         // insert the label
         if let Some(label) = label {
+            // insert label while checking if label already exist
             old_break = !self.break_labels.insert(label.to_string());
-            // block
+            // start of block
             self.context.func().stmts.push(Stmt::Block {
                 label: label.to_string(),
             });
         }
-
         // open a new scope
         self.context.new_scope();
-
+        // hoist the statements
         self.hoist_stmts(block.stmts.iter())?;
 
+        // translate all the statements
         for stmt in &block.stmts {
             self.translate_stmt(stmt, None)?;
         }
@@ -124,10 +128,11 @@ impl Transformer {
 
         // remove the label
         if let Some(label) = label {
+            // only remove if label is not shared
             if !old_break {
                 self.break_labels.remove(label);
             }
-            // end block
+            // end of block
             self.context.func().stmts.push(Stmt::EndBlock);
         }
 
@@ -136,31 +141,35 @@ impl Transformer {
 
     pub fn translate_decl(&mut self, decl: &swc::Decl) -> Result<()> {
         match decl {
+            // class declare
             swc::Decl::Class(c) => {
                 let id = self.context.get_class_id(&c.ident.sym);
                 self.translate_class(id, c.ident.sym.to_string(), &c.class)?;
                 self.context.func().stmts.push(Stmt::DeclareClass(id));
             }
+            // function declare
             swc::Decl::Fn(f) => {
                 let id = self.context.get_func_id(&f.ident.sym);
                 self.translate_function(id, None, &f.function)?;
                 self.context.func().stmts.push(Stmt::DeclareFunction(id));
             }
             swc::Decl::TsEnum(_) => {
-                // does nothing
+                // do nothing
             }
             swc::Decl::TsInterface(_) => {
-                // does nothing
+                // do nothing
             }
             swc::Decl::TsModule(_) => {
-                // does nothing
+                // do nothing
             }
             swc::Decl::TsTypeAlias(_) => {
-                // does noting
+                // do noting
             }
+            // using variable declare
             swc::Decl::Using(u) => {
                 self.translate_using_decl(u)?;
             }
+            // other variable declare
             swc::Decl::Var(decl) => {
                 self.translate_var_decl(decl)?;
             }
@@ -170,17 +179,25 @@ impl Transformer {
 
     /// variable declaration
     pub fn translate_var_decl(&mut self, decl: &swc::VarDecl) -> Result<Vec<VariableId>> {
+        // vec to store newly created ids
         let mut ids = Vec::new();
 
+        // loop through each declorator
         for d in &decl.decls {
-            let init = if let Some(init) = &d.init {
-                Some(self.translate_expr(&init, None)?)
-            } else {
-                None
-            };
-
-            ids.extend_from_slice(&self.translate_pat_var_decl(decl.kind, &d.name, init, None)?)
+            let init = if let Some(e) = &d.init {
+                        Some(MaybeTranslatedExpr::NotTranslated(&e))
+                    } else {
+                        None
+                    };
+            // translate the variable declare with pattern and initialiser
+            ids.extend_from_slice(&self.translate_pat_var_decl(
+                decl.kind,
+                &d.name,
+                    init,
+                None,
+            )?)
         }
+        // return ids
         return Ok(ids);
     }
 
@@ -188,38 +205,38 @@ impl Transformer {
         &mut self,
         kind: swc::VarDeclKind,
         pat: &swc::Pat,
-        init: Option<(Expr, Type)>,
+        init: Option<MaybeTranslatedExpr>,
         parent_ann: Option<(Type, Span)>,
     ) -> Result<Vec<VariableId>> {
         match pat {
+            // simple variable
             swc::Pat::Ident(id) => Ok(vec![
                 self.translate_ident_var_dec(kind, id, init, parent_ann)?
             ]),
+            // destructive array pattern
             swc::Pat::Array(a) => self.translate_array_pat_decl(kind, a, init, parent_ann),
+            // destructive object pattern
             swc::Pat::Object(obj) => self.tranlslate_object_pat_decl(kind, obj, init, parent_ann),
+            // assignment pattern, default initialiser
             swc::Pat::Assign(a) => {
+                // not supported
                 return Err(Error::syntax_error(
                     a.span,
                     "invalid left-hand side assignment",
-                ))
-            }
-            swc::Pat::Expr(e) => {
-                return Err(Error::syntax_error(
-                    e.span(),
-                    "invalid left-hand side assignment",
-                ))
-            }
-            swc::Pat::Invalid(i) => {
-                return Err(Error::syntax_error(
-                    i.span,
-                    "invalid left-hand side assignment",
-                ))
+                ));
             }
             // todo: rest assignment
             swc::Pat::Rest(r) => {
                 return Err(Error::syntax_error(
                     r.dot3_token,
                     "rest assignment not supportd",
+                ))
+            }
+            // exprssion pattern is only allowed in for-in loop, these are explicitly handled
+            swc::Pat::Expr(_) | swc::Pat::Invalid(_) => {
+                return Err(Error::syntax_error(
+                    pat.span(),
+                    "invalid left-hand side assignment",
                 ))
             }
         }
@@ -229,40 +246,66 @@ impl Transformer {
         &mut self,
         kind: swc::VarDeclKind,
         ident: &swc::BindingIdent,
-        init: Option<(Expr, Type)>,
+        init: Option<MaybeTranslatedExpr>,
         parent_ann: Option<(Type, Span)>,
     ) -> Result<VariableId> {
         let varid = VariableId::new();
 
-        let mut ty = None;
+        let ty;
         let mut init_expr = None;
 
-        if let Some(ann) = &ident.type_ann {
-            ty = Some(self.translate_type(&ann.type_ann)?);
+        let ty_ann = if let Some(ann) = &ident.type_ann {
+            Some(self.translate_type(&ann.type_ann)?)
         } else {
             if let Some((ann, _)) = parent_ann {
-                ty = Some(ann);
+                Some(ann)
+            } else {
+                None
             }
+        };
+
+        // 'const' declarations must be initialized.
+        if kind == swc::VarDeclKind::Const && init.is_none() {
+            return Err(Error::syntax_error(
+                ident.span,
+                "'const' declarations must be initialized.",
+            ));
         }
 
-        if let Some((mut init, init_ty)) = init {
-            match init_ty {
-                Type::LiteralBigint(_) => {
-                    ty = Some(Type::Bigint);
-                }
-                Type::LiteralBool(_) => ty = Some(Type::Bool),
-                Type::LiteralInt(_) | Type::Int => {
-                    ty = Some(Type::Number);
-                    init = Expr::Cast(Box::new(init), Type::Number);
-                }
-                Type::LiteralNumber(_) => ty = Some(Type::Number),
-                Type::LiteralString(_) => ty = Some(Type::String),
-                _ => ty = Some(init_ty),
-            }
+        if let Some(init) = init {
+            // translate the expression
+            let (mut init, init_ty) = init.translate(self, ty_ann.as_ref())?;
 
+            // type check init type can be assigned to annotated
+            if let Some(ann) = &ty_ann {
+                // type check
+                self.type_check(ident.span(), &init_ty, ann)?;
+                // variable type is its annotation
+                ty = ty_ann;
+            } else {
+                // transform literal types
+                match init_ty {
+                    Type::LiteralBigint(_) => {
+                        ty = Some(Type::Bigint);
+                    }
+                    Type::LiteralBool(_) => ty = Some(Type::Bool),
+                    Type::LiteralInt(_) | Type::Int => {
+                        ty = Some(Type::Number);
+                        init = Expr::Cast(Box::new(init), Type::Number);
+                    }
+                    Type::LiteralNumber(_) => ty = Some(Type::Number),
+                    Type::LiteralString(_) => ty = Some(Type::String),
+                    _ => ty = Some(init_ty),
+                }
+            }
+            // set initial expression
             init_expr = Some(init);
+        } else {
+            // veriable type is its annotation
+            ty = ty_ann;
         }
 
+        // no initial expression or type annotation is found
         if ty.is_none() {
             return Err(Error::syntax_error(ident.span, "missing type annotation"));
         }
@@ -277,6 +320,20 @@ impl Transformer {
                 ty: ty.as_ref().unwrap().clone(),
             },
         ) {
+            if kind == swc::VarDeclKind::Var {
+                if let Some(Binding::Var {
+                    redeclarable,
+                    ty: var_ty,
+                    ..
+                }) = self.context.find(&ident.sym)
+                {
+                    if *redeclarable {
+                        if ty.as_ref().unwrap() != var_ty {
+                            return Err(Error::syntax_error(ident.span, format!("Subsequent variable declarations must have the same type.  Variable '{}' must be of type '', but here has type ''.", ident.sym)));
+                        }
+                    }
+                }
+            }
             // the identifier is already declared
             return Err(Error::syntax_error(ident.span, "duplicated identifier"));
         }
@@ -309,7 +366,7 @@ impl Transformer {
         &mut self,
         kind: swc::VarDeclKind,
         obj: &swc::ObjectPat,
-        init: Option<(Expr, Type)>,
+        init: Option<MaybeTranslatedExpr>,
         // annotation given by parent pattern
         parent_ann: Option<(Type, Span)>,
     ) -> Result<Vec<VariableId>> {
@@ -327,7 +384,7 @@ impl Transformer {
         &mut self,
         kind: swc::VarDeclKind,
         pat: &swc::ArrayPat,
-        init: Option<(Expr, Type)>,
+        init: Option<MaybeTranslatedExpr>,
         // annotation given by parent pattern
         parent_ann: Option<(Type, Span)>,
     ) -> Result<Vec<VariableId>> {
@@ -406,17 +463,18 @@ impl Transformer {
         };
 
         // push the initialiser to stack and get its type
-        let init_ty = if let Some((e, t)) = init {
-            // push the initialiser to stack
-            self.context
-                .func()
-                .stmts
-                .push(Stmt::Expr(Box::new(Expr::Push(Box::new(e)))));
-            // return type
-            Some(t)
-        } else {
-            // no initialiser
-            None
+        let init_ty = match init{
+            Some(init) => {
+                let (init_expr, init_ty) = init.translate(self, ty_ann.as_ref())?;
+                // push the initialiser to stack
+                self.context
+                    .func()
+                    .stmts
+                    .push(Stmt::Expr(Box::new(Expr::Push(Box::new(init_expr)))));
+                // return type
+                Some(init_ty)
+            },
+            None => None
         };
 
         for i in 0..pat.elems.len() {
@@ -445,7 +503,7 @@ impl Transformer {
                         let vs = self.translate_pat_var_decl(
                             kind,
                             p,
-                            Some((member_expr, prop_ty)),
+                            Some(MaybeTranslatedExpr::Translated(member_expr, prop_ty)),
                             ann_prop_ty,
                         )?;
                         // push ids
@@ -459,7 +517,12 @@ impl Transformer {
                     }
                 } else {
                     // no initialiser
-                    let vs = self.translate_pat_var_decl(kind, p, None, ann_prop_ty)?;
+                    let vs = self.translate_pat_var_decl(
+                        kind,
+                        p,
+                        None,
+                        ann_prop_ty,
+                    )?;
                     // push ids
                     ids.extend_from_slice(&vs);
                 }
@@ -589,26 +652,20 @@ impl Transformer {
             old_continue = !self.continue_labels.insert(label.to_string());
         }
 
+        // translate break condition first
+        let (test, _ty) = self.translate_expr(&d.test, Some(&Type::Bool))?;
+
+        // create scope
         self.context.new_scope();
+        // enter loop
         self.context.func().stmts.push(Stmt::Loop {
             label: label.map(|l| l.to_string()),
+            update: None,
+            end_check: Some(Box::new(test)),
         });
 
         // translate blody
         self.translate_stmt(&d.body, None)?;
-
-        // break if test
-        let (test, _ty) = self.translate_expr(&d.test, Some(&Type::Bool))?;
-
-        let func = self.context.func();
-        func.stmts.push(Stmt::If {
-            test: Box::new(Expr::Unary {
-                op: UnaryOp::LogicalNot,
-                value: Box::new(test),
-            }),
-        });
-        func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
-        func.stmts.push(Stmt::EndIf);
 
         // end scope must go before end loop
         self.context.end_scope();
@@ -636,6 +693,8 @@ impl Transformer {
         // push loop
         self.context.func().stmts.push(Stmt::Loop {
             label: label.map(|l| l.to_string()),
+            update: None,
+            end_check: None,
         });
         // open new scope
         self.context.new_scope();
@@ -653,12 +712,12 @@ impl Transformer {
         func.stmts.push(Stmt::Break(label.map(|l| l.to_string())));
         func.stmts.push(Stmt::EndIf);
 
-        // end scope must go before end loop
-        self.context.end_scope();
-
-        // translate blody
+        // translate body
         self.translate_stmt(&w.body, None)?;
 
+        // end scope must go before end loop
+        self.context.end_scope();
+        // end loop
         self.context.func().stmts.push(Stmt::EndLoop);
 
         if let Some(label) = label {
@@ -685,7 +744,7 @@ impl Transformer {
 
         // open new context
         self.context.new_scope();
-        // initialise
+        // initialiser
         if let Some(init) = &f.init {
             match init {
                 swc::VarDeclOrExpr::Expr(e) => {
@@ -704,13 +763,28 @@ impl Transformer {
                 }
             }
         }
+
+        // translate update expression
+        let update = if let Some(update) = &f.update {
+            let (expr, _ty) = self.translate_expr(&update, None)?;
+            Some(Box::new(expr))
+        } else {
+            None
+        };
+
         // enter loop
         self.context.func().stmts.push(Stmt::Loop {
             label: label.map(|s| s.to_string()),
+            update: update,
+            end_check: None,
         });
+
+        // create new scope for loop body
+        self.context.new_scope();
 
         // break if false
         if let Some(test) = &f.test {
+            // translate break condition
             let (test, _ty) = self.translate_expr(&test, Some(&Type::Bool))?;
             let func = self.context.func();
             // break if not test
@@ -724,15 +798,16 @@ impl Transformer {
             func.stmts.push(Stmt::EndIf);
         }
 
+        // translate body
         self.translate_stmt(&f.body, None)?;
 
-        if let Some(update) = &f.update {
-            let (expr, _ty) = self.translate_expr(&update, None)?;
-            self.context.func().stmts.push(Stmt::Expr(Box::new(expr)));
-        }
-
+        // close scope for loop body
         self.context.end_scope();
+        // end loop
         self.context.func().stmts.push(Stmt::EndLoop);
+
+        // close scope for for-head
+        self.context.end_scope();
 
         // remove label
         if let Some(label) = label {
@@ -871,6 +946,8 @@ impl Transformer {
 
         self.context.func().stmts.push(Stmt::Loop {
             label: label.map(|l| l.to_string()),
+            update: None,
+            end_check: None,
         });
 
         // the breaking condition
@@ -1117,6 +1194,8 @@ impl Transformer {
 
         self.context.func().stmts.push(Stmt::Loop {
             label: label.map(|l| l.to_string()),
+            update: None,
+            end_check: None,
         });
 
         // the breaking condition
@@ -1263,6 +1342,11 @@ impl Transformer {
         ty: Type,
     ) -> Result<()> {
         match for_head {
+            swc::ForHead::Pat(b) if b.is_expr() => {
+                let expr = b.as_expr().unwrap();
+
+                
+            }
             swc::ForHead::Pat(p) => {
                 if let Some(ident) = p.as_ident() {
                     if let Some(ann) = &ident.type_ann {
@@ -1396,61 +1480,18 @@ impl Transformer {
                         "for head can only have one variable binding",
                     ));
                 }
-                if let Some(ident) = v.decls[0].name.as_ident() {
-                    let var_id = VariableId::new();
-                    let var_ty;
+                let decl = &v.decls[0];
+                let init = match &decl.init{
+                    Some(e) => Some(MaybeTranslatedExpr::NotTranslated(&e)),
+                    None => None
+                };
 
-                    if let Some(ann) = &ident.type_ann {
-                        let t = self.translate_type(&ann.type_ann)?;
-                        self.type_check(ann.span, &ty, &t)?;
-
-                        if ty != t {
-                            expr = Expr::Cast(Box::new(expr), t.clone());
-                        }
-
-                        var_ty = t;
-                    } else {
-                        var_ty = ty;
-                    };
-
-                    if !self.context.declare(
-                        &ident.sym,
-                        Binding::Var {
-                            writable: v.kind != swc::VarDeclKind::Const,
-                            redeclarable: v.kind == swc::VarDeclKind::Var,
-                            id: var_id,
-                            ty: var_ty.clone(),
-                        },
-                    ) {
-                        return Err(Error::syntax_error(
-                            ident.id.span,
-                            format!("duplicated identifier '{}'", ident.sym),
-                        ));
-                    }
-
-                    self.context.func().stmts.push(Stmt::DeclareVar {
-                        kind: match v.kind {
-                            swc::VarDeclKind::Const => VarKind::Const,
-                            swc::VarDeclKind::Let => VarKind::Let,
-                            swc::VarDeclKind::Var => VarKind::Var,
-                        },
-                        id: var_id,
-                        ty: var_ty,
-                    });
-                    self.context
-                        .func()
-                        .stmts
-                        .push(Stmt::Expr(Box::new(Expr::VarAssign {
-                            op: crate::ast::AssignOp::Assign,
-                            variable: var_id,
-                            value: Box::new(expr),
-                        })));
-                } else {
-                    return Err(Error::syntax_error(
-                        v.span,
-                        "destructive pattern not allowed",
-                    ));
-                }
+                self.translate_pat_var_decl(
+                    v.kind, 
+                    &decl.name, 
+                    init, 
+                    None
+                )?;
             }
         }
         return Ok(());
@@ -1501,8 +1542,8 @@ impl Transformer {
                     if let Some(ann) = &ident.type_ann {
                         let catch_ty = self.translate_type(&ann.type_ann)?;
 
-                        if catch_ty != Type::Any{
-                            return Err(Error::syntax_error(ann.span, "Catch clause variable type annotation must be 'any' or 'unknown' if specified."))
+                        if catch_ty != Type::Any {
+                            return Err(Error::syntax_error(ann.span, "Catch clause variable type annotation must be 'any' or 'unknown' if specified."));
                         }
                     }
                     self.context.declare(
@@ -1528,10 +1569,7 @@ impl Transformer {
             }
 
             // enter catch
-            self.context
-                .func()
-                .stmts
-                .push(Stmt::Catch(varid));
+            self.context.func().stmts.push(Stmt::Catch(varid));
 
             // translate the body
             self.translate_block_stmt(&handler.body, None)?;

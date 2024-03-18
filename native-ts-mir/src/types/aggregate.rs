@@ -12,9 +12,9 @@ pub struct AggregateDesc<'ctx> {
 
 impl<'ctx> AggregateDesc<'ctx> {
     pub const fn new() -> Self {
-        Self { 
+        Self {
             fields: Vec::new(),
-            hash: 0
+            hash: 0,
         }
     }
     /// return true if has field
@@ -80,9 +80,9 @@ pub struct InterfaceDesc<'ctx> {
 
 impl<'ctx> InterfaceDesc<'ctx> {
     pub const fn new() -> Self {
-        Self { 
+        Self {
             fields: Vec::new(),
-            hash: 0
+            hash: 0,
         }
     }
     /// return true if interface has field

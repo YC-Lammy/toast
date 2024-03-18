@@ -238,6 +238,7 @@ impl Context {
             if let Binding::Var {
                 redeclarable,
                 id: varid,
+                ty: ty1,
                 ..
             } = bind
             {
@@ -247,14 +248,32 @@ impl Context {
                         Binding::Var {
                             writable: true,
                             redeclarable: true,
-                            ..
+                            ty: ty2,
+                            id,
                         } => {
+                            if ty1 != ty2 {
+                                return false;
+                            }
+
                             // copy the old variable id
                             let varid = *varid;
+                            let new_id = *id;
+                            let ty = ty2.clone();
+
                             // replace the current binding
                             scope.bindings.insert(name.to_string(), binding);
                             // drop the variable
                             self.func().stmts.push(Stmt::DropVar(varid));
+
+                            // register the new variable
+                            self.func().variables.insert(
+                                new_id,
+                                VariableDesc {
+                                    ty: ty,
+                                    is_heap: false,
+                                },
+                            );
+
                             return true;
                         }
                         _ => {}

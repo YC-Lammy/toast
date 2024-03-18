@@ -51,7 +51,6 @@ pub struct FunctionID<'ctx> {
     pub(super) _mark: PhantomData<&'ctx ()>,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ident(u64);
 

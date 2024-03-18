@@ -19,3 +19,13 @@ fn test_for_of_loop() {
     "#;
     common::run_test(s);
 }
+
+#[test]
+fn test_while_loop() {
+    let s = "let i = 0;
+
+    while (i < 100){
+        i++;
+    }";
+    common::run_test(s);
+}

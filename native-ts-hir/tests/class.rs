@@ -17,3 +17,19 @@ fn test_class() {
     }",
     )
 }
+
+#[test]
+fn test_intersect() {
+    common::run_test(
+        "
+    interface A{
+        a: number;
+    }
+    
+    interface B{
+        a: string
+    }
+    
+    type U = A & B;",
+    )
+}

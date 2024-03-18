@@ -14,6 +14,22 @@ use super::{context::Binding, Transformer};
 
 type Result<T> = std::result::Result<T, Error>;
 
+pub enum MaybeTranslatedExpr<'a>{
+    NotTranslated(&'a swc::Expr),
+    Translated(Expr, Type)
+}
+
+impl<'a> MaybeTranslatedExpr<'a>{
+    pub fn translate(self, transformer: &mut Transformer, expected_ty: Option<&Type>) -> Result<(Expr, Type)>{
+        match self{
+            Self::NotTranslated(e) => {
+                return transformer.translate_expr(e, expected_ty)
+            }
+            Self::Translated(e, ty) => Ok((e, ty))
+        }
+    }
+}
+
 impl Transformer {
     /// entry for translateing expressions
     pub fn translate_expr(
@@ -845,7 +861,7 @@ impl Transformer {
         }
 
         return Ok((
-            Expr::Array { values: exprs },
+            Expr::Tuple { values: exprs },
             Type::Tuple(tys.into_boxed_slice()),
         ));
     }
@@ -870,7 +886,45 @@ impl Transformer {
                 ))
             }
             // expr pattern is only valid in for-in loops
-            swc::Pat::Expr(_) => unreachable!(),
+            swc::Pat::Expr(e) => {
+                let (assign_target, target_ty) = self.translate_expr(&e, None)?;
+
+                self.type_check(e.span(), &value_ty, &target_ty)?;
+
+                let mut value = value;
+                self.cast(&mut value, &value_ty, &target_ty);
+
+                match assign_target {
+                    Expr::Member {
+                        object,
+                        key,
+                        // invalid assignment target if optional
+                        optional: false,
+                    } => Ok((
+                        Expr::MemberAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            object: object,
+                            key: key,
+                            value: Box::new(value),
+                        },
+                        target_ty,
+                    )),
+                    Expr::VarLoad { span: _, variable } => Ok((
+                        Expr::VarAssign {
+                            op: crate::ast::AssignOp::Assign,
+                            variable: variable,
+                            value: Box::new(value),
+                        },
+                        target_ty,
+                    )),
+                    _ => {
+                        return Err(Error::syntax_error(
+                            e.span(),
+                            "invalid left-hand side assignment",
+                        ))
+                    }
+                }
+            }
             // simple variable assignment
             swc::Pat::Ident(id) => {
                 self.translate_var_assign(pat.span(), &id.id, op, value, value_ty)
@@ -1055,7 +1109,7 @@ impl Transformer {
                 }
                 // both sides must be int or bigint
                 if !(left_ty == Type::Int && right_ty == Type::Int)
-                    || !(left_ty == Type::Bigint && right_ty == Type::Bigint)
+                    && !(left_ty == Type::Bigint && right_ty == Type::Bigint)
                 {
                     return Err(Error::syntax_error(b.span, format!("The operand of an arithmetic operation must be of type 'number' or 'bigint'")));
                 }

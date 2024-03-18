@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use swc_core::common::{BytePos, Spanned};
 
 pub use swc_core;
+pub use swc_core::common::SourceMap;
 
 /// parser or configuration file
 pub mod config;
@@ -34,24 +35,23 @@ pub struct ParsedProgram {
 }
 
 /// a temperary structure used to parse source code
-#[derive(Default)]
-pub struct Parser {
+pub struct Parser<'a> {
     /// source map holds the files and paths
-    src: swc_core::common::SourceMap,
+    src: &'a mut swc_core::common::SourceMap,
     /// the already parsed modules
     modules: HashMap<ModuleId, ParsedModule>,
 }
 
-impl Parser {
-    pub fn new() -> Self {
+impl<'a> Parser<'a> {
+    pub fn new(map: &'a mut SourceMap) -> Self {
         Self {
-            src: swc_core::common::SourceMap::new(Default::default()),
+            src: map,
             modules: HashMap::new(),
         }
     }
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
     /// try to resolve dependency
     pub fn resolve_dependency(&self, base_path: &Path, name: &str) -> Result<PathBuf, String> {
         // it is a local file

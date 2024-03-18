@@ -65,6 +65,8 @@ pub enum Stmt {
     /// a loop
     Loop {
         label: Option<String>,
+        update: Option<Box<Expr>>,
+        end_check: Option<Box<Expr>>,
     },
     /// end of loop
     EndLoop,

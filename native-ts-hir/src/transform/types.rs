@@ -576,14 +576,64 @@ impl Transformer {
                 return Err(Error::syntax_error(t.span, "import types not supported"));
             }
             swc::TsType::TsIndexedAccessType(i) => {
-                if i.readonly {
-                    // todo!()
-                }
-
+                // the index access type
                 let index_ty = self.translate_type(&i.index_type)?;
+                // the object type being accessed
                 let value_ty = self.translate_type(&i.obj_type)?;
 
-                return Ok(Type::Map(Box::new(index_ty), Box::new(value_ty)));
+                match &value_ty {
+                    // array types can use number type as index access type
+                    Type::Array(elem) => match &index_ty {
+                        // number types
+                        Type::Number | Type::LiteralNumber(_) | Type::Int | Type::LiteralInt(_) => {
+                            // return a clone of element type
+                            return Ok(elem.as_ref().clone());
+                        }
+                        // otherwise fall through
+                        _ => {}
+                    },
+                    // tuple types can use number type as index access type
+                    Type::Tuple(elem) => match &index_ty {
+                        // number type with unknown index
+                        Type::Number | Type::Int => {
+                            // return a union with possible element types
+                            return Ok(Type::Union(elem.clone()));
+                        }
+                        // otherwise fall through
+                        _ => {}
+                    },
+                    // fall through
+                    _ => {}
+                }
+
+                // create a property name out of literal types
+                let key = match index_ty {
+                    // integer
+                    Type::LiteralInt(i) => PropName::Int(i),
+                    // number
+                    Type::LiteralNumber(i) => PropName::Int(i as i32),
+                    // string
+                    Type::LiteralString(s) => PropName::String(s.to_string()),
+                    // not a supported index access type
+                    _ => {
+                        return Err(Error::syntax_error(
+                            i.index_type.span(),
+                            format!("type '' cannot be used as index access type"),
+                        ))
+                    }
+                };
+
+                // find the property type
+                if let Some(ty) = self.type_has_property(&value_ty, &key, false) {
+                    // return property type
+                    return Ok(ty);
+                } else {
+                    // object type does not have the property
+                    return Err(Error::syntax_error(
+                        i.index_type.span(),
+                        format!("type '' has no property '{}'", key),
+                    ));
+                }
             }
             swc::TsType::TsInferType(i) => {
                 // TODO: infer types
@@ -643,19 +693,50 @@ impl Transformer {
             }
             swc::TsType::TsTypeLit(l) => return self.translate_literal_object_type(l),
             swc::TsType::TsTypeOperator(o) => {
+                // translate the type
                 let ty = self.translate_type(&o.type_ann)?;
 
                 match o.op {
-                    swc::TsTypeOperatorOp::KeyOf => match ty {
-                        Type::Map(k, _) => return Ok(*k),
-                        Type::Array(_) | Type::Tuple(_) => return Ok(Type::Number),
-                        _ => {
-                            return Err(Error::syntax_error(
-                                o.span,
-                                "expected index accessing type",
-                            ))
+                    swc::TsTypeOperatorOp::KeyOf => {
+                        // vector for union type
+                        let mut elem = Vec::new();
+
+                        // loop through properties
+                        for p in self.get_properties(&ty) {
+                            match p {
+                                // a literal string
+                                PropName::Ident(id) | PropName::String(id) => {
+                                    elem.push(Type::LiteralString(id.clone().into_boxed_str()))
+                                }
+                                // a literal integer
+                                PropName::Int(i) => elem.push(Type::LiteralInt(*i)),
+                                // private properties are not visible
+                                PropName::Private(s) => {}
+                                // a symbol
+                                PropName::Symbol(s) => elem.push(Type::Symbol),
+                            }
                         }
-                    },
+
+                        // add number to union if array
+                        if let Type::Array(_) = &ty {
+                            elem.push(Type::Number);
+                        }
+
+                        // any can be dynamically accessed
+                        if let Type::Any = &ty {
+                            elem.push(Type::String);
+                            elem.push(Type::Number);
+                            elem.push(Type::Symbol);
+                        }
+
+                        // no properties
+                        if elem.is_empty() {
+                            return Ok(Type::Undefined);
+                        }
+
+                        // return union
+                        return Ok(Type::Union(elem.into()));
+                    }
                     swc::TsTypeOperatorOp::ReadOnly => return Ok(ty),
                     swc::TsTypeOperatorOp::Unique => return Ok(ty),
                 }
@@ -1045,19 +1126,30 @@ impl Transformer {
         return Ok(Type::Interface(id));
     }
 
+    // lookup binding by entity name
     fn find_binding(&mut self, entity_name: &swc::TsEntityName) -> Option<Binding> {
+        // match variant of entity name
         match entity_name {
-            swc::TsEntityName::Ident(id) => return self.context.find(&id.sym).map(|b| b.clone()),
+            // an ident entity name
+            swc::TsEntityName::Ident(id) => {
+                // find binding from the current context
+                return self.context.find(&id.sym).map(|b| b.clone());
+            }
+            // a chained entity name
             swc::TsEntityName::TsQualifiedName(q) => {
+                // find the binding of module
                 let left = self.find_binding(&q.left)?;
 
                 match left {
+                    // only a module binding is allowed
                     Binding::NameSpace(namespace) => {
+                        // find the binding from module exports
                         return self.find_binding_from_module(
                             namespace,
                             &PropName::Ident(q.right.sym.to_string()),
                         );
                     }
+                    // parent binding is not a module, no binding is found
                     _ => return None,
                 }
             }
@@ -1389,6 +1481,10 @@ impl Transformer {
             }
         }
         return Err(Error::type_error(span, fulfills.clone(), ty.clone(), ""));
+    }
+
+    pub fn get_properties(&self, ty: &Type) -> &[PropName] {
+        todo!()
     }
 
     pub fn type_has_property(&self, ty: &Type, prop: &PropName, method: bool) -> Option<Type> {

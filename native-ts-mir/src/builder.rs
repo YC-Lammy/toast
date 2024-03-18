@@ -1,9 +1,12 @@
 use std::cell::RefCell;
 use std::marker::PhantomData;
 
-use types::{Auto, AutoArgs, Enum, FunctionType, Future, Generator, PointerMarkerType, Smart, ValueIndex};
+use types::{
+    Auto, AutoArgs, Enum, FunctionType, Future, Generator, PointerMarkerType, Smart, ValueIndex,
+    U64,
+};
 
-use crate::function::{BlockDesc, Function};
+use crate::function::{BlockDesc, Function, LandingPadDesc};
 use crate::mir::{FCond, ICond, Ordering, MIR};
 use crate::types::simd::{LaneCount, SupportedLaneCount};
 use crate::types::{
@@ -17,6 +20,12 @@ use crate::{types, Context};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Block<'func> {
+    id: BlockID,
+    _mark: PhantomData<&'func ()>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LandingPadBlock<'func> {
     id: BlockID,
     _mark: PhantomData<&'func ()>,
 }
@@ -41,11 +50,11 @@ impl<'ctx, 'func> Builder<'ctx, 'func>
 where
     'ctx: 'func,
 {
-    pub fn new(ctx: &'ctx Context, func: &'func mut Function<'ctx>) -> Self{
-        Self { 
-            ctx: ctx, 
-            func: RefCell::new(func), 
-            current_block: RefCell::new(None)
+    pub fn new(ctx: &'ctx Context, func: &'func mut Function<'ctx>) -> Self {
+        Self {
+            ctx: ctx,
+            func: RefCell::new(func),
+            current_block: RefCell::new(None),
         }
     }
     pub fn create_block(&self) -> Block<'func> {
@@ -59,64 +68,67 @@ where
     }
 
     pub fn switch_to_block(&self, block: Block<'func>) {
-        let mut f = self
-            .func
-            .borrow_mut();
-        let block: &mut BlockDesc = 
-        f
+        let mut f = self.func.borrow_mut();
+        let block: &mut BlockDesc = f
             .blocks
             .iter_mut()
             .rev()
             .find(|b| b.id == block.id)
             .expect("Trying to get instruction builder without declaring block");
 
-        self.current_block.replace(unsafe { core::mem::transmute(block) });
+        self.current_block
+            .replace(unsafe { core::mem::transmute(block) });
     }
 
-    pub fn global_function(&self, func_id: FunctionID<'ctx>) -> Value<'ctx, 'func, types::Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>>{
+    pub fn global_function(
+        &self,
+        func_id: FunctionID<'ctx>,
+    ) -> Value<'ctx, 'func, types::Function<'ctx, AutoArgs<'ctx>, Auto<'ctx>>> {
         let f = &self.ctx.functions[func_id.id];
         let params = f.ty.params.clone();
         let mut return_ty = f.ty.return_.clone();
 
-        if f.is_async{
+        if f.is_async {
             return_ty = Type::Future(Box::new(return_ty));
         }
 
-        if let Some(gen) = &f.is_generator{
+        if let Some(gen) = &f.is_generator {
             return_ty = Type::Generator(Box::new((
-                if f.is_async{
-                   Type::Future(Box::new(gen.yield_type.clone())) 
-                } else{
+                if f.is_async {
+                    Type::Future(Box::new(gen.yield_type.clone()))
+                } else {
                     gen.yield_type.clone()
-                }, 
-                gen.resume_type.clone(), 
-                return_ty
+                },
+                gen.resume_type.clone(),
+                return_ty,
             )));
         }
 
         let id = ValueID::new();
         self.func.borrow_mut().map_ssa_func.push((func_id, id));
 
-        return Value { 
-            id, 
-            ty: types::Function{
+        return Value {
+            id,
+            ty: types::Function {
                 args: AutoArgs(params),
-                return_: Auto { inner: return_ty.clone(),
+                return_: Auto {
+                    inner: return_ty.clone(),
                 },
-                _mark: PhantomData
-            }, _mark: PhantomData 
-        }
+                _mark: PhantomData,
+            },
+            _mark: PhantomData,
+        };
     }
 
     /// # panic
     pub fn inst<'builder>(&'builder mut self) -> InstBuilder<'ctx, 'func, 'builder> {
-        if self.current_block.get_mut().is_none(){
+        if self.current_block.get_mut().is_none() {
             panic!("missing entry block")
         }
 
         InstBuilder {
             builder: self,
-            block: unsafe{core::mem::transmute_copy(&self.current_block)},
+            block: unsafe { core::mem::transmute_copy(&self.current_block) },
             _mark: PhantomData,
         }
     }
@@ -135,23 +147,23 @@ impl<'ctx, 'func, 'builder> InstBuilder<'ctx, 'func, 'builder>
 where
     'ctx: 'func,
 {
-    fn new_ssa(&self, _ty: Type<'ctx>) -> ValueID{
+    fn new_ssa(&self, _ty: Type<'ctx>) -> ValueID {
         ValueID::new()
     }
 
     /// read from param
-    pub fn param(&self, index: usize) -> Option<Value<'ctx, 'func, Auto<'ctx>>>{
-        if let Some(ty) = self.builder.func.borrow().params.get(index){
+    pub fn param(&self, index: usize) -> Option<Value<'ctx, 'func, Auto<'ctx>>> {
+        if let Some(ty) = self.builder.func.borrow().params.get(index) {
             let ty = ty.clone();
             let id = self.new_ssa(ty.clone());
 
             self.block.borrow_mut().inst.push(MIR::ReadParam(index, id));
 
-            return Some(Value { 
-                id: id, 
-                ty: Auto { inner: ty }, 
-                _mark: PhantomData 
-            })
+            return Some(Value {
+                id: id,
+                ty: Auto { inner: ty },
+                _mark: PhantomData,
+            });
         }
         return None;
     }
@@ -159,7 +171,10 @@ where
     /// an integer constant
     pub fn iconst<I: IntoIntMarkerType>(&self, value: I) -> Value<'ctx, 'func, I::Marker> {
         let id = self.new_ssa(I::Marker::default().to_type());
-        self.block.borrow_mut().inst.push(MIR::Iconst(value.to_i128(), id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Iconst(value.to_i128(), id));
 
         return Value {
             id: id,
@@ -217,10 +232,7 @@ where
     }
 
     /// negative value
-    pub fn neg<T: MathMarkerType>(
-        &self,
-        value: Value<'ctx, 'func, T>,
-    ) -> Value<'ctx, 'func, T> {
+    pub fn neg<T: MathMarkerType>(&self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, T> {
         let id = self.new_ssa(value.ty.to_type());
         self.block.borrow_mut().inst.push(MIR::Neg(value.id, id));
 
@@ -232,10 +244,7 @@ where
     }
 
     /// absolute value
-    pub fn abs<T: MathMarkerType>(
-        &self,
-        value: Value<'ctx, 'func, T>,
-    ) -> Value<'ctx, 'func, T> {
+    pub fn abs<T: MathMarkerType>(&self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, T> {
         let id = self.new_ssa(value.ty.to_type());
         self.block.borrow_mut().inst.push(MIR::Abs(value.id, id));
 
@@ -376,7 +385,10 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Bitand(a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Bitand(a.id, b.id, id));
 
         return Value {
             id,
@@ -391,7 +403,10 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::BitOr(a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::BitOr(a.id, b.id, id));
 
         return Value {
             id,
@@ -406,7 +421,10 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Bitxor(a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Bitxor(a.id, b.id, id));
 
         return Value {
             id,
@@ -448,7 +466,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Bitswap(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Bitswap(value.id, id));
 
         return Value {
             id,
@@ -462,7 +483,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::BitOnes(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::BitOnes(value.id, id));
 
         return Value {
             id,
@@ -476,7 +500,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::BitLeadingZeros(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::BitLeadingZeros(value.id, id));
 
         return Value {
             id,
@@ -490,7 +517,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::BitTrailingZeros(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::BitTrailingZeros(value.id, id));
 
         return Value {
             id,
@@ -505,7 +535,10 @@ where
         ty: U,
     ) -> Value<'ctx, 'func, U> {
         let id = self.new_ssa(ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Bitcast(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Bitcast(value.id, id));
 
         return Value {
             id,
@@ -521,7 +554,10 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Icmp(cond, a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Icmp(cond, a.id, b.id, id));
 
         return Value {
             id,
@@ -536,7 +572,10 @@ where
         b: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Fcmp(cond, a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Fcmp(cond, a.id, b.id, id));
 
         return Value {
             id,
@@ -580,7 +619,10 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Select(test.id, a.id, b.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Select(test.id, a.id, b.id, id));
 
         return Value {
             id,
@@ -596,7 +638,9 @@ where
         b: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, I> {
         let id = self.new_ssa(a.ty.to_type());
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::BitSelect(test.id, a.id, b.id, id));
 
         return Value {
@@ -654,7 +698,10 @@ where
         exponent: Value<'ctx, 'func, I32>,
     ) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Powi(value.id, exponent.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Powi(value.id, exponent.id, id));
 
         return Value {
             id,
@@ -669,7 +716,10 @@ where
         exponent: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(value.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::Powf(value.id, exponent.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Powf(value.id, exponent.id, id));
 
         return Value {
             id,
@@ -678,10 +728,7 @@ where
         };
     }
     /// floor
-    pub fn floor<F: FloatMarkerType>(
-        &self,
-        value: Value<'ctx, 'func, F>,
-    ) -> Value<'ctx, 'func, F> {
+    pub fn floor<F: FloatMarkerType>(&self, value: Value<'ctx, 'func, F>) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(value.ty.to_type());
         self.block.borrow_mut().inst.push(MIR::Floor(value.id, id));
 
@@ -692,10 +739,7 @@ where
         };
     }
     /// ceil
-    pub fn ceil<F: FloatMarkerType>(
-        &self,
-        value: Value<'ctx, 'func, F>,
-    ) -> Value<'ctx, 'func, F> {
+    pub fn ceil<F: FloatMarkerType>(&self, value: Value<'ctx, 'func, F>) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(value.ty.to_type());
         self.block.borrow_mut().inst.push(MIR::Ceil(value.id, id));
 
@@ -706,10 +750,7 @@ where
         };
     }
     /// round
-    pub fn round<F: FloatMarkerType>(
-        &self,
-        value: Value<'ctx, 'func, F>,
-    ) -> Value<'ctx, 'func, F> {
+    pub fn round<F: FloatMarkerType>(&self, value: Value<'ctx, 'func, F>) -> Value<'ctx, 'func, F> {
         let id = self.new_ssa(value.ty.to_type());
         self.block.borrow_mut().inst.push(MIR::Round(value.id, id));
 
@@ -724,7 +765,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, F::Marker> {
         let id = self.new_ssa(F::Marker::default().to_type());
-        self.block.borrow_mut().inst.push(MIR::IntToFloat(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::IntToFloat(value.id, id));
 
         return Value {
             id,
@@ -737,7 +781,10 @@ where
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, I::Marker> {
         let id = self.new_ssa(I::Marker::default().to_type());
-        self.block.borrow_mut().inst.push(MIR::FloatToInt(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::FloatToInt(value.id, id));
 
         return Value {
             id,
@@ -751,7 +798,10 @@ where
         value: Value<'ctx, 'func, I>,
     ) -> Value<'ctx, 'func, U::Marker> {
         let id = self.new_ssa(U::Marker::default().to_type());
-        self.block.borrow_mut().inst.push(MIR::IntCast(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::IntCast(value.id, id));
 
         return Value {
             id,
@@ -765,7 +815,10 @@ where
         value: Value<'ctx, 'func, F>,
     ) -> Value<'ctx, 'func, U::Marker> {
         let id = self.new_ssa(U::Marker::default().to_type());
-        self.block.borrow_mut().inst.push(MIR::FloatCast(value.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::FloatCast(value.id, id));
 
         return Value {
             id,
@@ -786,7 +839,9 @@ where
             panic!("index larger then lanes")
         }
         let id = self.new_ssa(T::default().to_type());
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::ExtractElement(vector.id, index as _, id));
 
         return Value {
@@ -809,7 +864,9 @@ where
             panic!("index larger then lanes")
         }
         let id = self.new_ssa(vector.ty.to_type());
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::InsertElement(vector.id, value.id, index as _, id));
 
         return Value {
@@ -837,7 +894,9 @@ where
         }
         let id = self.new_ssa(Type::Aggregate(ty));
 
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::Aggregate(values.iter().map(|v| v.id).collect(), id));
 
         return Value {
@@ -869,7 +928,9 @@ where
             }
         }
         let id = self.new_ssa(Type::Interface(iface));
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::AggregateToInterface(value.id, iface, id));
 
         return Value {
@@ -905,7 +966,9 @@ where
         let id = self.new_ssa(Type::Interface(iface));
 
         // insert instruction
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::InterfaceToInterface(value.id, iface, id));
 
         return Value {
@@ -986,19 +1049,19 @@ where
         };
 
         // the lifetime of type is phanom and can be safely transmuted
-        let ty: Type<'_> = unsafe { core::mem::transmute(ty.clone())};
-        
+        let ty: Type<'_> = unsafe { core::mem::transmute(ty.clone()) };
+
         let id = self.new_ssa(ty.clone());
 
         // insert instruction
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::ExtractValue(target.id, field, id));
 
         return Value {
             id,
-            ty: Auto {
-                inner: ty,
-            },
+            ty: Auto { inner: ty },
             _mark: PhantomData,
         };
     }
@@ -1080,7 +1143,9 @@ where
             panic!("type not match")
         }
 
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::InsertValue(target.id, field, value.id));
 
         return;
@@ -1097,7 +1162,9 @@ where
 
         drop(f);
 
-        self.block.borrow_mut().inst
+        self.block
+            .borrow_mut()
+            .inst
             .push(MIR::CreateStackSlot(StackSlotID(id), initialiser.id));
 
         StackSlot {
@@ -1113,7 +1180,10 @@ where
         slot: StackSlot<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, T> {
         let id = self.new_ssa(slot.ty.to_type());
-        self.block.borrow_mut().inst.push(MIR::StackLoad(slot.id, 0, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::StackLoad(slot.id, 0, id));
 
         return Value {
             id,
@@ -1127,7 +1197,10 @@ where
         slot: StackSlot<'ctx, 'func, T>,
         value: Value<'ctx, 'func, T>,
     ) {
-        self.block.borrow_mut().inst.push(MIR::StackStore(slot.id, 0, value.id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::StackStore(slot.id, 0, value.id));
     }
 
     /// retrieve pointer to a stack slot
@@ -1136,7 +1209,10 @@ where
         slot: StackSlot<'ctx, 'func, T>,
     ) -> Value<'ctx, 'func, Pointer<T>> {
         let id = self.new_ssa(Type::Pointer(Box::new(slot.ty.to_type())));
-        self.block.borrow_mut().inst.push(MIR::StackPtr(slot.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::StackPtr(slot.id, id));
 
         return Value {
             id,
@@ -1167,12 +1243,18 @@ where
         ptr: Value<'ctx, 'func, P>,
         value: Value<'ctx, 'func, T>,
     ) {
-        self.block.borrow_mut().inst.push(MIR::Store(ptr.id, value.id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Store(ptr.id, value.id));
     }
 
     /// memory fence operation
     pub fn fence(&self, ordering: Ordering) {
-        self.block.borrow_mut().inst.push(MIR::AtomicFence(ordering));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::AtomicFence(ordering));
     }
     /// returns the loaded value and success
     pub fn compare_exchange<T: IntMarkerType>(
@@ -1186,15 +1268,18 @@ where
         let loaded_id = self.new_ssa(T::default().to_type());
         let success_id = self.new_ssa(Type::I8);
 
-        self.block.borrow_mut().inst.push(MIR::AtomicCompareExchange(Box::new((
-            ptr.id,
-            cmp.id,
-            new.id,
-            success_order,
-            failure_order,
-            loaded_id,
-            success_id,
-        ))));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::AtomicCompareExchange(Box::new((
+                ptr.id,
+                cmp.id,
+                new.id,
+                success_order,
+                failure_order,
+                loaded_id,
+                success_id,
+            ))));
 
         return (
             Value {
@@ -1222,7 +1307,10 @@ where
         then: Block<'ctx>,
         else_: Block<'ctx>,
     ) {
-        self.block.borrow_mut().inst.push(MIR::Brz(test.id, then.id, else_.id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Brz(test.id, then.id, else_.id));
     }
 
     /// branch if non zero
@@ -1232,16 +1320,22 @@ where
         then: Block<'ctx>,
         else_: Block<'ctx>,
     ) {
-        self.block.borrow_mut().inst.push(MIR::Brnz(test.id, then.id, else_.id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Brnz(test.id, then.id, else_.id));
     }
 
     /// returns from a function
     pub fn return_<T: MarkerType<'ctx>>(&self, value: Option<Value<'ctx, 'func, T>>) {
-        self.block.borrow_mut().inst.push(MIR::Return(value.map(|v| v.id)));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::Return(value.map(|v| v.id)));
     }
 
     /// calls a function indirectly
-    /// 
+    ///
     /// # panic
     pub fn call_indirect<Arg: types::FunctionArgs<'ctx>, R: MarkerType<'ctx>>(
         &self,
@@ -1281,9 +1375,9 @@ where
 
     /// this function calls a function directly.
     /// the return value has auto type, user must cast the value before use.
-    /// 
+    ///
     /// # panic
-    pub fn call_direct(
+    pub fn call(
         &self,
         id: FunctionID<'ctx>,
         args: &[Value<'ctx, 'func, Auto<'ctx>>],
@@ -1320,6 +1414,108 @@ where
         };
     }
 
+    pub fn invoke_indirect<Arg: types::FunctionArgs<'ctx>, R: MarkerType<'ctx>>(
+        &self,
+        func: Value<'ctx, 'func, types::Function<'ctx, Arg, R>>,
+        args: &Arg::ArgValues<'func>,
+        then_block: Block<'func>,
+        catch_block: LandingPadBlock<'func>,
+    ) -> Value<'ctx, 'func, R> {
+        let args_len = args.len();
+        let ty_len = func.ty.args.len();
+
+        if args_len != ty_len {
+            panic!("arguments not match")
+        };
+
+        let mut arg_values = Vec::new();
+
+        for i in 0..ty_len {
+            let arg = args.get(i);
+            if arg.ty.inner != func.ty.args.get(i) {
+                panic!("argument type not match")
+            }
+            arg_values.push(arg.id);
+        }
+
+        let id = self.new_ssa(func.ty.return_.to_type());
+
+        self.block.borrow_mut().inst.push(MIR::InvokeIndirect {
+            func: func.id,
+            args: arg_values.into_boxed_slice(),
+            return_: id,
+            then_block: then_block.id,
+            catch_block: catch_block.id,
+        });
+        return Value {
+            id,
+            ty: func.ty.return_,
+            _mark: PhantomData,
+        };
+    }
+
+    /// this function calls a function directly.
+    /// the return value has auto type, user must cast the value before use.
+    ///
+    /// # panic
+    pub fn invoke(
+        &self,
+        id: FunctionID<'ctx>,
+        args: &[Value<'ctx, 'func, Auto<'ctx>>],
+        then_block: Block<'ctx>,
+        catch_block: LandingPadBlock<'func>,
+    ) -> Value<'ctx, 'func, Auto<'ctx>> {
+        let ty: &FunctionType<'ctx> =
+            unsafe { core::mem::transmute(self.builder.ctx.get_function_type(id)) };
+
+        if ty.params.len() != args.len() {
+            panic!("number of arguments not match")
+        }
+        for (i, t) in ty.params.iter().enumerate() {
+            if &args[i].ty.inner != t {
+                panic!("argument type not match")
+            }
+        }
+
+        let return_id = self.new_ssa(ty.return_.clone());
+
+        self.block.borrow_mut().inst.push(MIR::Invoke {
+            id: FunctionID {
+                id: id.id,
+                _mark: PhantomData,
+            },
+            args: args.iter().map(|v| v.id).collect(),
+            return_: return_id,
+            then_block: then_block.id,
+            catch_block: catch_block.id,
+        });
+
+        return Value {
+            id: return_id,
+            ty: Auto {
+                inner: ty.return_.clone(),
+            },
+            _mark: PhantomData,
+        };
+    }
+
+    pub fn landing_pad(
+        &self,
+        block: Block<'func>,
+        personality: FunctionID<'ctx>,
+        clauses: &[()],
+        is_cleanup: bool,
+    ) -> LandingPadBlock<'func> {
+        self.block.borrow_mut().landing_pad = Some(LandingPadDesc{
+            personality: personality,
+            clauses: Vec::new()
+        });
+        return LandingPadBlock {
+            id: block.id,
+            _mark: PhantomData,
+        };
+    }
+
     /// allocate a smart pointer.
     ///
     /// smart pointers must be stored in a stack slot.
@@ -1341,10 +1537,10 @@ where
     }
 
     /// frees an allocation
-    /// 
+    ///
     /// if GC is choosen, a safepoint is inserted.
     /// if Arc is choosen, this function does nothing.
-    pub fn free<T: MarkerType<'ctx>>(&self, ptr: Value<'ctx, 'func, Smart<T>>){
+    pub fn free<T: MarkerType<'ctx>>(&self, ptr: Value<'ctx, 'func, Smart<T>>) {
         self.block.borrow_mut().inst.push(MIR::Free(ptr.id));
     }
 
@@ -1352,12 +1548,15 @@ where
         &self,
         future: Value<'ctx, 'func, Future<T>>,
     ) -> Value<'ctx, 'func, T> {
-        if !self.builder.func.borrow().is_async{
+        if !self.builder.func.borrow().is_async {
             panic!("await in non async function")
         }
         let id = self.new_ssa(future.ty.value.to_type());
 
-        self.block.borrow_mut().inst.push(MIR::AsyncAwait(future.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::AsyncAwait(future.id, id));
 
         return Value {
             id,
@@ -1367,41 +1566,54 @@ where
     }
 
     /// yields from a generator
-    /// 
+    ///
     /// all the previous SSA values would be invalidated after this point.
     /// Any value wanting to live across generator boundaries must be stored in stackslot
-    pub fn yield_<T: MarkerType<'ctx>>(&self, value: Value<'ctx, 'func, T>) -> Value<'ctx, 'func, Auto<'ctx>>{
-        if let Some(desc) = &self.builder.func.borrow().is_generator{
+    pub fn yield_<T: MarkerType<'ctx>>(
+        &self,
+        value: Value<'ctx, 'func, T>,
+    ) -> Value<'ctx, 'func, Auto<'ctx>> {
+        if let Some(desc) = &self.builder.func.borrow().is_generator {
             let resume_ty = desc.resume_type.clone();
 
             let id = self.new_ssa(resume_ty.clone());
 
             self.block.borrow_mut().inst.push(MIR::Yield(value.id, id));
 
-            return Value { 
-                id, 
-                ty: Auto { inner: resume_ty }, 
-                _mark: PhantomData 
-            }
-        } else{
+            return Value {
+                id,
+                ty: Auto { inner: resume_ty },
+                _mark: PhantomData,
+            };
+        } else {
             panic!("yield in non generator function")
         }
     }
 
     /// resume a generator
-    pub fn generator_resume<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>, >(&self, generator: Value<'ctx, 'func, Generator<Y, RE, R>>, resume: Value<'ctx, 'func, RE>) -> Value<'ctx, 'func, Enum<'ctx, (Y, R)>>{
-        let ty = Type::Enum(Box::new([generator.ty.yield_.to_type(), generator.ty.return_.to_type()]));
+    pub fn generator_resume<Y: MarkerType<'ctx>, RE: MarkerType<'ctx>, R: MarkerType<'ctx>>(
+        &self,
+        generator: Value<'ctx, 'func, Generator<Y, RE, R>>,
+        resume: Value<'ctx, 'func, RE>,
+    ) -> Value<'ctx, 'func, Enum<'ctx, (Y, R)>> {
+        let ty = Type::Enum(Box::new([
+            generator.ty.yield_.to_type(),
+            generator.ty.return_.to_type(),
+        ]));
         let id = self.new_ssa(ty);
 
-        self.block.borrow_mut().inst.push(MIR::GeneratorNext(generator.id, resume.id, id));
+        self.block
+            .borrow_mut()
+            .inst
+            .push(MIR::GeneratorNext(generator.id, resume.id, id));
 
-        return Value { 
-            id: id, 
-            ty: Enum { 
-                variants: (generator.ty.yield_, generator.ty.return_), 
-                _mark: PhantomData 
-            }, 
-            _mark: PhantomData
-        }
+        return Value {
+            id: id,
+            ty: Enum {
+                variants: (generator.ty.yield_, generator.ty.return_),
+                _mark: PhantomData,
+            },
+            _mark: PhantomData,
+        };
     }
 }

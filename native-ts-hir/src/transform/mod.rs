@@ -496,16 +496,22 @@ impl Transformer {
     }
 
     pub fn hoist_class(&mut self, name: Option<&str>, class: &swc::Class) -> Result<()> {
+        // create a new class id
         let id = ClassId::new();
+        // check for generic paramaters
         if class.type_params.is_some() {
+            // declare generic class
             if !self
                 .context
                 .declare(name.unwrap_or(""), Binding::GenericClass(id))
             {
+                // identifier is already used
                 return Err(Error::syntax_error(class.span, "duplicated identifier"));
             }
         } else {
+            // declare the class
             if !self.context.declare(name.unwrap_or(""), Binding::Class(id)) {
+                // identifier is already used
                 return Err(Error::syntax_error(class.span, "duplicated identifier"));
             }
         }
@@ -564,19 +570,24 @@ impl Transformer {
         name: Option<&str>,
         iface: &swc::TsInterfaceDecl,
     ) -> Result<()> {
+        // create a new id for interface
         let id = InterfaceId::new();
+        let name = name.unwrap_or("");
+        // a generic interface
         if iface.type_params.is_some() {
-            if !self
-                .context
-                .declare(name.unwrap_or(""), Binding::GenericInterface(id))
-            {
+            // declare generic interface
+            if !self.context.declare(name, Binding::GenericInterface(id)) {
+                // identifier already used
                 return Err(Error::syntax_error(iface.span, "duplicated identifier"));
             }
         } else {
-            if !self
-                .context
-                .declare(name.unwrap_or(""), Binding::Interface(id))
-            {
+            // allow declaration merging
+            if let Some(Binding::Interface(_)) = self.context.find(name) {
+                return Ok(());
+            }
+            // declare interface
+            if !self.context.declare(name, Binding::Interface(id)) {
+                // identifier already used
                 return Err(Error::syntax_error(iface.span, "duplicated identifier"));
             }
         }

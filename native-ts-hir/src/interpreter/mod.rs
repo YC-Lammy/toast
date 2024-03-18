@@ -93,8 +93,9 @@ impl Context {
         if let Some(v) = self.heap_variables.get(&id) {
             return v.read().clone();
         }
-        panic!("invalid variable id")
+        panic!("invalid variable id: {:?}", id)
     }
+
     pub fn write(&mut self, id: VariableId, value: Value) {
         if let Some(v) = self.variables.get_mut(&id) {
             *v = value;
@@ -228,20 +229,20 @@ impl<'a> InterpreterRunning<'a> {
 
         match self.run_stmts(&func.stmts, &mut cursor) {
             StmtResult::Ok => {
-                self.dispose_context();
+                self.dispose_context()?;
                 // restore context
                 self.context = old_context;
             }
             StmtResult::Continue(_) => panic!("invalid continue"),
             StmtResult::Break(_) => panic!("invalid break"),
             StmtResult::Return(r) => {
-                self.dispose_context();
+                self.dispose_context()?;
                 // restore context
                 self.context = old_context;
                 return Ok(r);
             }
             StmtResult::Error(e) => {
-                self.dispose_context();
+                self.dispose_context()?;
                 // restore context
                 self.context = old_context;
                 return Err(e);
@@ -251,7 +252,7 @@ impl<'a> InterpreterRunning<'a> {
         return Ok(Value::Undefined);
     }
 
-    fn dispose_context(&mut self) {
+    fn dispose_context(&mut self) -> Result<(), Value> {
         for i in 0..self.context.using.len() {
             let u = self.context.using[i];
             let v = self
@@ -265,7 +266,7 @@ impl<'a> InterpreterRunning<'a> {
                     Value::Function(id) => {
                         let func = self.table.functions.get(&id).expect("invalid function");
 
-                        self.run_function(func, v, &[], Context::new());
+                        self.run_function(func, v, &[], Context::new())?;
                     }
                     Value::Clousure { id, captures } => {
                         let func = self.table.functions.get(&id).expect("invalid function");
@@ -275,12 +276,14 @@ impl<'a> InterpreterRunning<'a> {
                             ctx.heap_variables.insert(*vid, cap.clone());
                         }
 
-                        self.run_function(func, v, &[], ctx);
+                        self.run_function(func, v, &[], ctx)?;
                     }
                     _ => panic!("callee is not a function"),
                 }
             }
         }
+
+        return Ok(());
     }
 
     fn end_scope<A: Fn(&Stmt) -> bool, B: Fn(&Stmt) -> bool>(
@@ -374,7 +377,20 @@ impl<'a> InterpreterRunning<'a> {
                                     }
                                 }
                             } else {
-                                return StmtResult::Break(l);
+                                // break from block
+                                // end current scope
+                                self.end_scope(
+                                    stmts,
+                                    cursor,
+                                    |b| match b {
+                                        Stmt::Block { .. } => true,
+                                        _ => false,
+                                    },
+                                    |s| match s {
+                                        Stmt::EndBlock => true,
+                                        _ => false,
+                                    },
+                                );
                             }
                         }
                         StmtResult::Continue(_) => return re,
@@ -524,7 +540,11 @@ impl<'a> InterpreterRunning<'a> {
                         Err(e) => return StmtResult::Error(e),
                     };
                 }
-                Stmt::Loop { label } => {
+                Stmt::Loop {
+                    label,
+                    update,
+                    end_check,
+                } => {
                     // the loop
                     loop {
                         let mut new_cursor = *cursor;
@@ -537,8 +557,6 @@ impl<'a> InterpreterRunning<'a> {
                                 false
                             }
                         });
-
-                        println!("{:#?}", re);
 
                         match re {
                             StmtResult::Break(l) => {
@@ -553,6 +571,24 @@ impl<'a> InterpreterRunning<'a> {
                             StmtResult::Continue(l) => {
                                 // label is not specidied or is none
                                 if l.is_none() || &l == label {
+                                    // run update
+                                    if let Some(update) = update {
+                                        match self.run_expr(&update) {
+                                            Ok(_) => {}
+                                            Err(e) => return StmtResult::Error(e),
+                                        };
+                                    }
+                                    if let Some(end_check) = end_check {
+                                        match self.run_expr(&end_check) {
+                                            Ok(v) => {
+                                                if !self.to_bool(&v) {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => return StmtResult::Error(e),
+                                        };
+                                    }
+                                    // continue to next loop
                                     continue;
                                 } else {
                                     return StmtResult::Continue(l);
@@ -560,7 +596,25 @@ impl<'a> InterpreterRunning<'a> {
                             }
                             StmtResult::Return(_) => return re,
                             StmtResult::Error(_) => return re,
-                            StmtResult::Ok => (),
+                            StmtResult::Ok => {
+                                // run update
+                                if let Some(update) = update {
+                                    match self.run_expr(&update) {
+                                        Ok(_) => {}
+                                        Err(e) => return StmtResult::Error(e),
+                                    };
+                                }
+                                if let Some(end_check) = end_check {
+                                    match self.run_expr(&end_check) {
+                                        Ok(v) => {
+                                            if !self.to_bool(&v) {
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => return StmtResult::Error(e),
+                                    };
+                                }
+                            }
                         };
                     }
 
@@ -1401,11 +1455,18 @@ impl<'a> InterpreterRunning<'a> {
 
     fn get_property(&self, value: &Value, prop: &PropName) -> Option<Value> {
         match value {
-            Value::Array(a) => match prop {
+            Value::Array(a) | Value::Tuple(a) => match prop {
                 PropName::Ident(s) => match s.as_str() {
                     "length" => Some(Value::Int(a.read().len() as i32)),
                     _ => None,
                 },
+                PropName::Int(i) => {
+                    let arr = a.read();
+                    if *i as usize >= arr.len() {
+                        return None;
+                    }
+                    return Some(arr[*i as usize].clone());
+                }
                 _ => todo!(),
             },
             _ => todo!(),
@@ -1461,7 +1522,21 @@ impl<'a> InterpreterRunning<'a> {
     }
 
     fn set_property_expr(&self, obj: &Value, key: Value, value: Value) {
-        todo!()
+        match obj {
+            Value::Array(a) => {
+                let i = match key {
+                    Value::Int(i) => i as usize,
+                    Value::Number(i) => i as i32 as usize,
+                    _ => unreachable!(),
+                };
+
+                match a.write().get_mut(i) {
+                    Some(v) => *v = value,
+                    None => todo!(),
+                };
+            }
+            _ => todo!(),
+        }
     }
 
     fn strict_equal(&self, left: &Value, right: &Value) -> bool {
@@ -1564,7 +1639,7 @@ impl<'a> InterpreterRunning<'a> {
     }
 
     fn equals(&self, a: &Value, b: &Value) -> bool {
-        println!("{:?} == {:?}", a, b);
+        //println!("{:?} == {:?}", a, b);
         self.strict_equal(a, b)
     }
 
@@ -1618,6 +1693,7 @@ impl<'a> InterpreterRunning<'a> {
         match a {
             Value::Int(i) => match b {
                 Value::Int(n) => Value::Int(i + n),
+                Value::Number(n) => Value::Number(n + i as f64),
                 _ => panic!(),
             },
             Value::Number(i) => match b {
@@ -1732,7 +1808,7 @@ impl<'a> InterpreterRunning<'a> {
     }
 
     fn rem(&self, a: Value, b: Value) -> Value {
-        println!("{:?} % {:?}", a, b);
+        // println!("{:?} % {:?}", a, b);
         match a {
             Value::Int(i) => match b {
                 Value::Int(b) => Value::Int(i % b),
@@ -1866,6 +1942,7 @@ impl<'a> InterpreterRunning<'a> {
             },
             Value::Number(i) => match b {
                 Value::Number(n) => Value::Bool(i > n),
+                Value::Int(n) => Value::Bool(i > n as f64),
                 _ => panic!(),
             },
             Value::Bigint(i) => match b {
@@ -1877,7 +1954,7 @@ impl<'a> InterpreterRunning<'a> {
     }
 
     fn gteq(&self, a: Value, b: Value) -> Value {
-        println!("{:?} >= {:?}", a, b);
+        // println!("{:?} >= {:?}", a, b);
         match a {
             Value::Int(i) => match b {
                 Value::Int(n) => Value::Bool(i >= n),
@@ -1885,6 +1962,7 @@ impl<'a> InterpreterRunning<'a> {
             },
             Value::Number(i) => match b {
                 Value::Number(n) => Value::Bool(i >= n),
+                Value::Int(n) => Value::Bool(i >= n as f64),
                 _ => panic!(),
             },
             Value::Bigint(i) => match b {
@@ -1903,7 +1981,8 @@ impl<'a> InterpreterRunning<'a> {
             },
             Value::Number(i) => match b {
                 Value::Number(n) => Value::Bool(i < n),
-                _ => panic!(),
+                Value::Int(n) => Value::Bool(i < n as f64),
+                _ => panic!("{:?}", b),
             },
             Value::Bigint(i) => match b {
                 Value::Bigint(n) => Value::Bool(i < n),
