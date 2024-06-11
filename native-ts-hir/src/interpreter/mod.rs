@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::ast::*;
 use crate::common::{ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId};
+use crate::hir::*;
 use crate::symbol_table::SymbolTable;
 use crate::PropName;
 use crate::Symbol;
@@ -34,7 +34,7 @@ pub enum Value {
         value: Box<Value>,
     },
     Union {
-        ty: Box<[Type]>,
+        ty: Arc<[Type]>,
         value: Box<Value>,
     },
     Any(Box<Value>),
@@ -46,6 +46,7 @@ pub enum Value {
     DynObject {
         values: Arc<[(PropName, Value)]>,
     },
+    NamespaceObject(ModuleId),
     Enum {
         id: EnumId,
         variant: usize,
@@ -113,9 +114,9 @@ impl Context {
     }
 
     pub fn remove(&mut self, id: VariableId) -> bool {
-        if self.variables.remove(&id).is_none() {
-            return self.variables.remove(&id).is_some();
-        }
+        //if self.variables.remove(&id).is_none() {
+        //    return self.variables.remove(&id).is_some();
+        //}
 
         return true;
     }
@@ -130,7 +131,7 @@ impl Interpreter {
     pub fn run(&self, program: &Program) -> Result<Value, Value> {
         let mut runner = InterpreterRunning {
             table: &program.table,
-            modules: &program.modules,
+            modules: &program.modules.read(),
 
             ran_modules: HashSet::new(),
 
@@ -893,7 +894,7 @@ impl<'a> InterpreterRunning<'a> {
                 }
                 Ok(Value::Array(Arc::new(RwLock::new(array))))
             }
-            Expr::Tuple { values } => {
+            Expr::Tuple { span: _, values } => {
                 let mut tuple = Vec::new();
                 for v in values {
                     tuple.push(self.run_expr(v)?);
@@ -908,6 +909,7 @@ impl<'a> InterpreterRunning<'a> {
                 }
                 Ok(Value::DynObject { values: obj.into() })
             }
+            Expr::NamespaceObject(id) => Ok(Value::NamespaceObject(*id)),
             Expr::New { class, args } => {
                 todo!()
             }
@@ -916,10 +918,14 @@ impl<'a> InterpreterRunning<'a> {
                 args,
                 optional,
             } => {
-                let (this, mut callee) = match callee.as_ref() {
+                let (this, callee) = match callee.as_ref() {
                     Callee::Expr(e) => (self.this.clone(), Some(self.run_expr(e)?)),
                     Callee::Function(f) => (self.this.clone(), Some(Value::Function(*f))),
-                    Callee::Member { object, prop } => {
+                    Callee::Member {
+                        object,
+                        prop,
+                        optional,
+                    } => {
                         let obj = self.run_expr(object)?;
                         let method = match prop {
                             PropNameOrExpr::PropName(p) => self.get_property(&obj, p),
@@ -941,24 +947,30 @@ impl<'a> InterpreterRunning<'a> {
                     arguments.push(self.run_expr(arg)?);
                 }
 
-                if *optional {
-                    if let Some(c) = &callee {
-                        match self.assert_not_null(c.clone()) {
-                            Ok(v) => callee = Some(v),
-                            Err(_) => return Ok(Value::Undefined),
+                let callee = if let Some(c) = callee {
+                    if self.is_nullable(&c) {
+                        if *optional {
+                            return Ok(Value::Undefined);
+                        } else {
+                            panic!("callee is not a function")
                         }
                     } else {
-                        return Ok(Value::Undefined);
+                        c
                     }
-                }
+                } else if *optional {
+                    return Ok(Value::Undefined);
+                } else {
+                    // not optional and None
+                    panic!("callee is not a function")
+                };
 
                 match callee {
-                    Some(Value::Function(id)) => {
+                    Value::Function(id) => {
                         let func = self.table.functions.get(&id).expect("invalid function");
 
                         return self.run_function(func, this, &arguments, Context::new());
                     }
-                    Some(Value::Clousure { id, captures }) => {
+                    Value::Clousure { id, captures } => {
                         let func = self.table.functions.get(&id).expect("invalid function");
 
                         let mut ctx = Context::new();
@@ -1202,6 +1214,25 @@ impl<'a> InterpreterRunning<'a> {
             }
             Expr::Bin { op, left, right } => {
                 let a = self.run_expr(&left)?;
+
+                // only evaluate right hand side if left is false
+                if *op == BinOp::Or {
+                    if self.to_bool(&a) {
+                        return Ok(a);
+                    } else {
+                        return self.run_expr(&right);
+                    }
+                }
+
+                // only evaluate right hand side if left is null
+                if *op == BinOp::Nullish {
+                    if self.is_nullable(&a) {
+                        return self.run_expr(&right);
+                    } else {
+                        return Ok(a);
+                    }
+                }
+
                 let b = self.run_expr(&right)?;
 
                 let v = match op {
@@ -1276,20 +1307,21 @@ impl<'a> InterpreterRunning<'a> {
             }
             Expr::Ternary { test, left, right } => {
                 let test = self.run_expr(&test)?;
-                let left = self.run_expr(&left)?;
-                let right = self.run_expr(&right)?;
 
                 if self.to_bool(&test) {
-                    Ok(left)
+                    return self.run_expr(&left);
                 } else {
-                    Ok(right)
+                    return self.run_expr(&right);
                 }
             }
-            Expr::Seq(a, b) => {
-                let _ = self.run_expr(&a)?;
-                let b = self.run_expr(&b)?;
+            Expr::Seq { seq } => {
+                let mut v = Value::Undefined;
 
-                return Ok(b);
+                for e in seq {
+                    v = self.run_expr(e)?;
+                }
+
+                return Ok(v);
             }
             Expr::Await(p) => {
                 let p = self.run_expr(&p)?;
@@ -1469,6 +1501,14 @@ impl<'a> InterpreterRunning<'a> {
                 }
                 _ => todo!(),
             },
+            Value::DynObject { values } | Value::Object { values, .. } => {
+                for (p, v) in values.iter() {
+                    if p == prop {
+                        return Some(v.clone());
+                    }
+                }
+                return None;
+            }
             _ => todo!(),
         }
     }
@@ -1607,6 +1647,10 @@ impl<'a> InterpreterRunning<'a> {
             Value::Object { values: o1, .. } => match right {
                 Value::Object { values: o2, .. } => Arc::as_ptr(o1) == Arc::as_ptr(o2),
                 Value::DynObject { values: o2 } => Arc::as_ptr(o1) == Arc::as_ptr(o2),
+                _ => false,
+            },
+            Value::NamespaceObject(id1) => match right {
+                Value::NamespaceObject(id2) => id1 == id2,
                 _ => false,
             },
             Value::Regex() => match right {
@@ -2023,6 +2067,7 @@ impl<'a> InterpreterRunning<'a> {
             Value::Clousure { .. } => true,
             Value::Object { .. } => true,
             Value::DynObject { .. } => true,
+            Value::NamespaceObject(_) => true,
             Value::Regex() => true,
             Value::Symbol(_) => true,
             Value::String(s) => !s.is_empty(),

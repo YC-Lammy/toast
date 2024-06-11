@@ -1,6 +1,6 @@
 use native_ts_parser::swc_core::common::Span;
 
-use crate::ast::Type;
+use crate::hir::Type;
 
 #[derive(Debug, Clone)]
 pub enum Error {
@@ -64,8 +64,8 @@ impl Error {
             } => {
                 buf.push_str("TypeError: ");
                 buf.push_str(&msg);
-                buf.push_str("\n    type ");
-                buf.push_str(" is not assignable to type ");
+                buf.push_str(&format!("\n    type '{:#?}'", actual));
+                buf.push_str(&format!(" is not assignable to type '{:#?}'", expected));
 
                 *span
             }

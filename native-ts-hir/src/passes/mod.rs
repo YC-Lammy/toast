@@ -1,4 +1,4 @@
-use crate::{ast::Program, error::Error};
+use crate::{error::Error, hir::Program};
 
 pub mod class_constructor;
 pub mod class_defult_initialiser;

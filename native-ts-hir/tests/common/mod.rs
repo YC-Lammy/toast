@@ -1,6 +1,6 @@
-use native_ts_hir::ast::format::Formatter;
+use native_ts_hir::ast_to_hir::Transformer;
+use native_ts_hir::hir::format::Formatter;
 use native_ts_hir::interpreter::Interpreter;
-use native_ts_hir::transform::Transformer;
 
 pub fn run_test(script: &str) {
     let mut map = native_ts_parser::SourceMap::default();
@@ -13,7 +13,7 @@ pub fn run_test(script: &str) {
         )
         .expect("parse failed");
 
-    let translator = Transformer::new();
+    let translator = Transformer::new(Default::default());
 
     let p = match translator.transform_program(&m) {
         Ok(v) => v,
@@ -22,7 +22,7 @@ pub fn run_test(script: &str) {
         }
     };
 
-    for (_id, module) in &p.modules {
+    for (_id, module) in p.modules.read().iter() {
         let mut formatter = Formatter::new(&p.table);
         formatter.format_module(&module);
 
@@ -31,7 +31,11 @@ pub fn run_test(script: &str) {
     }
 
     let intpr = Interpreter::new();
+
+    let t = std::time::Instant::now();
     let re = intpr.run(&p);
+
+    println!("finished in {}ns", t.elapsed().as_nanos());
 
     println!("{:?}", re);
 }

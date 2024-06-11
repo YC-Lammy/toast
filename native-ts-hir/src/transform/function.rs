@@ -7,7 +7,6 @@ use crate::error::Error;
 use crate::{
     ast::{Expr, FuncType, Stmt, Type},
     common::FunctionId,
-    transform::context::Binding,
 };
 
 use super::Transformer;
@@ -62,7 +61,7 @@ impl Transformer {
 
         match func.body.as_ref() {
             swc::BlockStmtOrExpr::Expr(e) => {
-                let (expr, ty) = self.translate_expr(e, return_ty.as_ref())?;
+                let (mut expr, ty) = self.translate_expr(e, return_ty.as_ref())?;
 
                 let mut need_cast = false;
 
@@ -73,7 +72,7 @@ impl Transformer {
 
                         need_cast = expected.return_ty != ty;
                     } else {
-                        return_ty = Some(ty);
+                        return_ty = Some(self.generalise_type(&mut expr, &ty).unwrap_or(ty));
                     }
                 }
 
@@ -109,7 +108,7 @@ impl Transformer {
         let func_id = self.context.end_function();
         debug_assert!(func_id == id);
 
-        return Ok((Expr::Closure(id), Type::Function(Box::new(func_ty))));
+        return Ok((Expr::Closure(id), Type::Function(func_ty.into())));
     }
 
     pub(super) fn translate_function(
@@ -159,15 +158,7 @@ impl Transformer {
                 };
 
                 // declare binding
-                self.context.declare(
-                    &ident.sym,
-                    Binding::Var {
-                        writable: true,
-                        redeclarable: true,
-                        id: id,
-                        ty: ty,
-                    },
-                );
+                self.context.bind_variable(&ident.sym, id, ty, true, true);
             }
         }
 
@@ -185,7 +176,7 @@ impl Transformer {
             return_ty = Type::Promise(Box::new(return_ty));
         }
         if func.is_generator {
-            return_ty = Type::Iterator(Box::new(return_ty));
+            return_ty = Type::Iterator(return_ty.into());
         }
 
         let old_this_ty = core::mem::replace(&mut self.this_ty, this_ty);

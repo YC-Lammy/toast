@@ -1,13 +1,15 @@
-/// HIR definitions
-pub mod ast;
+/// transforms AST to HIR
+pub mod ast_to_hir;
 /// utils
 mod common;
+/// HIR definitions
+pub mod hir;
 /// post transformation passes
 pub mod passes;
 /// symbol table data structure
 mod symbol_table;
-/// transforms AST to HIR
-pub mod transform;
+pub mod type_check;
+pub mod util;
 
 /// error
 pub mod error;

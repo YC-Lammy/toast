@@ -3,29 +3,33 @@ use num_traits::ToPrimitive;
 use native_ts_parser::swc_core::common::{Span, Spanned, DUMMY_SP};
 use native_ts_parser::swc_core::ecma::ast as swc;
 
-use crate::common::FunctionId;
+use crate::ast::PropertyDesc;
+use crate::common::{FunctionId, OR};
 use crate::error::Error;
 use crate::{
     ast::{Callee, Expr, FuncType, PropNameOrExpr, Type},
     PropName,
 };
 
-use super::{context::Binding, Transformer};
+use super::Transformer;
+use super::{ClassBinding, ValueBinding};
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub enum MaybeTranslatedExpr<'a>{
+pub enum MaybeTranslatedExpr<'a> {
     NotTranslated(&'a swc::Expr),
-    Translated(Expr, Type)
+    Translated(Expr, Type),
 }
 
-impl<'a> MaybeTranslatedExpr<'a>{
-    pub fn translate(self, transformer: &mut Transformer, expected_ty: Option<&Type>) -> Result<(Expr, Type)>{
-        match self{
-            Self::NotTranslated(e) => {
-                return transformer.translate_expr(e, expected_ty)
-            }
-            Self::Translated(e, ty) => Ok((e, ty))
+impl<'a> MaybeTranslatedExpr<'a> {
+    pub fn translate(
+        self,
+        transformer: &mut Transformer,
+        expected_ty: Option<&Type>,
+    ) -> Result<(Expr, Type)> {
+        match self {
+            Self::NotTranslated(e) => return transformer.translate_expr(e, expected_ty),
+            Self::Translated(e, ty) => Ok((e, ty)),
         }
     }
 }
@@ -76,7 +80,7 @@ impl Transformer {
                         }
                     }
                     // write union
-                    ty = Type::Union(v.into_boxed_slice())
+                    ty = Type::Union(v.into())
                 }
 
                 (Expr::Await(Box::new(e)), ty)
@@ -107,7 +111,7 @@ impl Transformer {
                     .expect("invalid function")
                     .ty();
 
-                (Expr::Closure(id), Type::Function(Box::new(ty)))
+                (Expr::Closure(id), Type::Function(ty.into()))
             }
             swc::Expr::Ident(id) => self.translate_var_load(id)?,
             swc::Expr::This(t) => (Expr::This(t.span), self.this_ty.clone()),
@@ -175,7 +179,7 @@ impl Transformer {
                             v.push(ty.clone());
                         }
                     }
-                    ty = Type::Union(v.into_boxed_slice());
+                    ty = Type::Union(v.into());
                 }
 
                 (Expr::AssertNonNull(Box::new(expr)), ty)
@@ -342,8 +346,8 @@ impl Transformer {
                 }
 
                 let array_ty = ty
-                    .map(|t| Type::Array(Box::new(t)))
-                    .or_else(|| Some(Type::Array(Box::new(Type::Any))))
+                    .map(|t| Type::Array(t.into()))
+                    .or_else(|| Some(Type::Array(Type::Any.into())))
                     .unwrap();
 
                 return Ok((Expr::Array { values: values }, array_ty));
@@ -474,7 +478,7 @@ impl Transformer {
         return Ok(());
     }
 
-    fn translate_var_assign(
+    pub fn translate_var_assign(
         &mut self,
         span: Span,
         var: &swc::Ident,
@@ -483,9 +487,9 @@ impl Transformer {
         value_ty: Type,
     ) -> Result<(Expr, Type)> {
         // get the variable id and variable type
-        let (varid, var_ty) = if let Some(binding) = self.context.find(&var.sym) {
+        let (varid, var_ty) = if let Some(binding) = self.context.find_value_binding(&var.sym) {
             match binding {
-                Binding::Var {
+                ValueBinding::Var {
                     writable,
                     redeclarable: _,
                     id,
@@ -502,7 +506,7 @@ impl Transformer {
                     (*id, ty.clone())
                 }
                 // using declare cannot be mutated
-                Binding::Using { .. } => {
+                ValueBinding::Using { .. } => {
                     return Err(Error::syntax_error(
                         var.span,
                         format!("variable '{}' is immutable", &var.sym),
@@ -543,7 +547,7 @@ impl Transformer {
         ));
     }
 
-    fn translate_member_assign(
+    pub fn translate_member_assign(
         &mut self,
         span: Span,
         member: &swc::MemberExpr,
@@ -588,7 +592,7 @@ impl Transformer {
         }
     }
 
-    fn translate_object_pat_assign(
+    pub fn translate_object_pat_assign(
         &mut self,
         pat: &swc::ObjectPat,
         value: Expr,
@@ -678,7 +682,11 @@ impl Transformer {
                     )?;
 
                     obj_expr.push((prop.clone(), assign_expr));
-                    obj_ty.push((prop, assign_ty));
+                    obj_ty.push(PropertyDesc {
+                        name: prop,
+                        ty: assign_ty,
+                        readonly: false,
+                    });
                 }
                 swc::ObjectPatProp::KeyValue(k) => {
                     let key = self.translate_prop_name(&k.key)?;
@@ -715,7 +723,11 @@ impl Transformer {
                         )?;
 
                         obj_expr.push((key.clone(), expr));
-                        obj_ty.push((key, assign_ty))
+                        obj_ty.push(PropertyDesc {
+                            name: key,
+                            ty: assign_ty,
+                            readonly: false,
+                        });
                     } else {
                         return Err(Error::syntax_error(
                             k.key.span(),
@@ -733,7 +745,7 @@ impl Transformer {
             }
         }
 
-        obj_ty.sort_by(|a, b| a.0.cmp(&b.0));
+        obj_ty.sort();
 
         return Ok((
             Expr::Object { props: obj_expr },
@@ -741,7 +753,7 @@ impl Transformer {
         ));
     }
 
-    fn translate_array_pat_assign(
+    pub fn translate_array_pat_assign(
         &mut self,
         pat: &swc::ArrayPat,
         value: Expr,
@@ -860,10 +872,7 @@ impl Transformer {
             exprs.push(expr);
         }
 
-        return Ok((
-            Expr::Tuple { values: exprs },
-            Type::Tuple(tys.into_boxed_slice()),
-        ));
+        return Ok((Expr::Tuple { values: exprs }, Type::Tuple(tys.into())));
     }
 
     fn translate_pat_assign(
@@ -1218,7 +1227,7 @@ impl Transformer {
                     }
                 };
 
-                (Callee::Super(sup), func_ty)
+                (Callee::Super(sup), func_ty.into())
             }
             swc::Callee::Import(i) => {
                 return Err(Error::syntax_error(i.span, "dynamic import not allowed"))
@@ -1229,7 +1238,7 @@ impl Transformer {
 
                 // check it is a function
                 let func_ty = if let Type::Function(func) = ty {
-                    *func
+                    func
                 } else {
                     return Err(Error::syntax_error(call.span, "callee is not a function"));
                 };
@@ -1239,14 +1248,21 @@ impl Transformer {
                     Expr::Member {
                         object,
                         key,
-                        optional: _,
+                        optional,
                     } => {
+                        if optional {
+                            return Err(Error::syntax_error(
+                                call.callee.span(),
+                                format!("Type '' is not callable",),
+                            ));
+                        }
                         // check if object matches func_ty.this type
                         // TODO
                         (
                             Callee::Member {
                                 object: *object,
                                 prop: key,
+                                optional: false,
                             },
                             func_ty,
                         )
@@ -1328,7 +1344,7 @@ impl Transformer {
                 args: args,
                 optional: false,
             },
-            callee_ty.return_ty,
+            callee_ty.return_ty.clone(),
         ));
     }
 
@@ -1353,13 +1369,16 @@ impl Transformer {
     }
 
     fn translate_var_load(&mut self, ident: &swc::Ident) -> Result<(Expr, Type)> {
-        match self.context.find(&ident.sym) {
-            Some(Binding::Var {
-                writable: _,
-                redeclarable: _,
+        // if it is namespace, it is certainly not a value
+        match self.context.find_namespace_or_value_binding(&ident.sym){
+            Some(OR::A(namespace)) => {
+                return Ok((Expr::NamespaceObject(namespace), Type::NamespaceObject(namespace)))
+            }
+            Some(OR::B(ValueBinding::Var {
                 id,
-                ty,
-            }) => {
+                ty, ..
+            })) | Some(OR::B(ValueBinding::Using { id, ty, .. }))
+            =>{
                 return Ok((
                     Expr::VarLoad {
                         span: ident.span,
@@ -1368,16 +1387,7 @@ impl Transformer {
                     ty.clone(),
                 ));
             }
-            Some(Binding::Using { id, ty, .. }) => {
-                return Ok((
-                    Expr::VarLoad {
-                        span: ident.span,
-                        variable: *id,
-                    },
-                    ty.clone(),
-                ))
-            }
-            Some(Binding::Function(f)) => {
+            Some(OR::B(ValueBinding::Function(f))) => {
                 // copy the id to avoid borrowing self
                 let id = *f;
                 // get the functio type
@@ -1388,42 +1398,48 @@ impl Transformer {
                     .expect("invalid function id")
                     .ty();
                 // return expression
-                return Ok((Expr::Function(id), Type::Function(Box::new(ty))));
+                return Ok((Expr::Function(id), Type::Function(ty.into())));
             }
-            None => {
-                return Err(Error::syntax_error(
-                    ident.span,
-                    format!("undefined identifier '{}'", ident.sym),
-                ))
+            Some(OR::B(ValueBinding::GenericFunction(f))) => {
+                return Err(Error::syntax_error(ident.span, "missing type arguments"))
             }
-            _ => {
-                return Err(Error::syntax_error(
-                    ident.span,
-                    format!("identifier '{}' is not a variable", ident.sym),
-                ))
-            }
+            None => {if self.context.has_binding(&ident.sym) {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        format!("identifier '{}' is not a variable", ident.sym),
+                    ));
+                } else {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        format!("undefined identifier '{}'", ident.sym),
+                    ));
+                }}
         }
     }
 
     fn translate_member(&mut self, member: &swc::MemberExpr) -> Result<(Expr, Type)> {
-        let (obj, obj_ty) = self.translate_expr(&member.obj, None)?;
-
+        
         let prop = match &member.prop {
             swc::MemberProp::Computed(c) => self.translate_computed_prop_name(&c.expr)?,
             swc::MemberProp::Ident(id) => {
                 PropNameOrExpr::PropName(PropName::Ident(id.sym.to_string()))
             }
             swc::MemberProp::PrivateName(id) => {
-                if self.this_ty == obj_ty {
-                    PropNameOrExpr::PropName(PropName::Private(id.id.sym.to_string()))
-                } else {
-                    return Err(Error::syntax_error(
-                        id.span,
-                        "cannot access privite properties outside of method",
-                    ));
-                }
+                PropNameOrExpr::PropName(PropName::Private(id.id.sym.to_string()))
             }
         };
+
+        let (obj, obj_ty) = self.translate_expr(&member.obj, None)?;
+
+        if let PropNameOrExpr::PropName(PropName::Private(_)) = &prop{
+            if self.this_ty != obj_ty{
+                return Err(Error::syntax_error(
+                        member.prop.span(),
+                        "cannot access privite properties outside of method",
+                    ));
+            }
+        }
+        
 
         match prop {
             PropNameOrExpr::PropName(name) => {
@@ -1730,7 +1746,7 @@ impl Transformer {
                 }
                 // find static functions
                 if let Some((fid, ty)) = cl.static_methods.get(&prop) {
-                    return Ok((Expr::Function(*fid), Type::Function(Box::new(ty.clone()))));
+                    return Ok((Expr::Function(*fid), Type::Function(ty.clone().into())));
                 }
 
                 if let Some(_) = cl.static_generic_methods.get(&prop) {
@@ -1778,8 +1794,8 @@ impl Transformer {
 
         let mut arguments = Vec::new();
 
-        match self.context.find(&ident.sym) {
-            Some(Binding::Class(class_id)) => {
+        match self.context.find_class_binding(&ident.sym) {
+            Some(ClassBinding::Class(class_id)) => {
                 // should have no type arguments
                 if let Some(args) = &n.type_args {
                     return Err(Error::syntax_error(args.span, "expected 0 type arguments"));
@@ -1837,10 +1853,22 @@ impl Transformer {
                     Type::Object(class_id),
                 ));
             }
-            Some(Binding::GenericClass(_class_id)) => {
+            Some(ClassBinding::Generic(_class_id)) => {
                 todo!("generic class")
             }
-            _ => return Err(Error::syntax_error(ident.span, "expected class")),
+            None => {
+                if self.context.has_binding(&ident.sym) {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        format!("'{}' is not a constructor.", ident.sym),
+                    ));
+                } else {
+                    return Err(Error::syntax_error(
+                        ident.span,
+                        format!("undefined identifier '{}'", ident.sym),
+                    ));
+                }
+            }
         };
     }
 
@@ -1918,7 +1946,7 @@ impl Transformer {
                     return Ok((Expr::Int(n.value as i32), Type::LiteralInt(n.value as i32)));
                 }
 
-                return Ok((Expr::Number(n.value), Type::LiteralNumber(n.value)));
+                return Ok((Expr::Number(n.value), Type::LiteralNumber(n.value.into())));
             }
             swc::Lit::Str(s) => Ok((
                 Expr::String(s.value.to_string()),
@@ -1934,54 +1962,72 @@ impl Transformer {
         obj: &swc::ObjectLit,
         expected_ty: Option<&Type>,
     ) -> Result<(Expr, Type)> {
-        let expected_obj_ty = match expected_ty {
-            Some(Type::LiteralObject(obj)) => Some(obj),
-            _ => None,
-        };
-
         let mut spans = Vec::new();
         let mut tys = Vec::new();
         let mut values = Vec::new();
 
         for p in &obj.props {
-            match p {
+            // translate the property name
+            let propname = match p {
                 swc::PropOrSpread::Spread(s) => {
                     return Err(Error::syntax_error(
                         s.dot3_token,
                         "spread expression not supported",
                     ))
                 }
+                swc::PropOrSpread::Prop(p) => match p.as_ref() {
+                    // multiple clause to reduce footprint
+                    swc::Prop::Assign(a) => PropName::Ident(a.key.sym.to_string()),
+                    swc::Prop::KeyValue(swc::KeyValueProp { key, .. })
+                    | swc::Prop::Method(swc::MethodProp { key, .. })
+                    | swc::Prop::Setter(swc::SetterProp { key, .. })
+                    | swc::Prop::Getter(swc::GetterProp { key, .. }) => {
+                        match self.translate_prop_name(&key)? {
+                            PropNameOrExpr::PropName(p) => p,
+                            PropNameOrExpr::Expr(_, _) => {
+                                return Err(Error::syntax_error(
+                                    key.span(),
+                                    "computed property name not allowed",
+                                ))
+                            }
+                        }
+                    }
+                    swc::Prop::Shorthand(s) => PropName::Ident(s.sym.to_string()),
+                },
+            };
+
+            let expected_prop_ty = if let Some(expected) = expected_ty {
+                if let Some(ty) = self.type_has_property(expected, &propname, false) {
+                    Some(ty)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // translate property
+            match p {
+                swc::PropOrSpread::Spread(_) => unreachable!(),
                 swc::PropOrSpread::Prop(p) => {
                     match p.as_ref() {
                         swc::Prop::KeyValue(v) => {
-                            let key = match self.translate_prop_name(&v.key)? {
-                                PropNameOrExpr::PropName(p) => p,
-                                PropNameOrExpr::Expr(_, _) => {
-                                    return Err(Error::syntax_error(
-                                        v.span(),
-                                        "computed property name not allowed",
-                                    ))
-                                }
-                            };
+                            // translate value
+                            let (mut value, mut ty) =
+                                self.translate_expr(&v.value, expected_prop_ty.as_ref())?;
 
-                            let (mut value, mut ty) = self.translate_expr(&v.value, None)?;
-
-                            match ty {
-                                Type::Int | Type::LiteralInt(_) => {
-                                    // cast to number
-                                    self.cast(&mut value, &ty, &Type::Number);
-                                    ty = Type::Number
-                                }
-                                Type::LiteralNumber(_) => ty = Type::Number,
-                                Type::LiteralString(_) => ty = Type::String,
-                                Type::LiteralBigint(_) => ty = Type::Bigint,
-                                Type::LiteralBool(_) => ty = Type::Bool,
-                                _ => {}
-                            };
+                            // generalise type
+                            ty = self.generalise_type(&mut value, &ty).unwrap_or(ty);
 
                             spans.push(v.key.span());
-                            tys.push((key.clone(), ty));
-                            values.push((key, value));
+                            // push property
+                            tys.push(PropertyDesc {
+                                name: propname.clone(),
+                                ty: ty,
+                                readonly: false,
+                            });
+                            // push expression
+                            values.push((propname, value));
                         }
                         swc::Prop::Shorthand(s) => {
                             if s.optional {
@@ -1991,37 +2037,61 @@ impl Transformer {
                                 ));
                             }
 
-                            let key = PropName::Ident(s.sym.to_string());
+                            // translate variale load
+                            let (mut value, ty) = self.translate_var_load(s)?;
 
-                            let (value, ty) = self.translate_var_load(s)?;
-
-                            spans.push(s.span);
-                            tys.push((key.clone(), ty));
-                            values.push((key, value));
-                        }
-                        swc::Prop::Method(m) => {
-                            let key = match self.translate_prop_name(&m.key)? {
-                                PropNameOrExpr::PropName(p) => p,
-                                PropNameOrExpr::Expr(_, _) => {
-                                    return Err(Error::syntax_error(
-                                        m.key.span(),
-                                        "computed property name not allowed",
-                                    ))
-                                }
+                            // type check
+                            let ty = if let Some(expected) = expected_prop_ty {
+                                self.type_check(s.span, &ty, &expected)?;
+                                self.cast(&mut value, &ty, &expected);
+                                // use expected type
+                                expected
+                            } else {
+                                ty
                             };
 
+                            spans.push(s.span);
+                            // push property
+                            tys.push(PropertyDesc {
+                                name: propname.clone(),
+                                ty: ty,
+                                readonly: false,
+                            });
+                            // push expression
+                            values.push((propname, value));
+                        }
+                        swc::Prop::Method(m) => {
+                            // create new function id
                             let funcid = FunctionId::new();
-
+                            // tranlate function
                             self.translate_function(funcid, None, &m.function)?;
 
-                            let value = Expr::Closure(funcid);
-                            let ty = Type::Function(Box::new(
-                                self.context.functions.get(&funcid).unwrap().ty(),
-                            ));
+                            // create closure
+                            let mut value = Expr::Closure(funcid);
+                            // function type
+                            let ty = Type::Function(
+                                self.context.functions.get(&funcid).unwrap().ty().into(),
+                            );
+
+                            // type check
+                            let ty = if let Some(expected) = expected_prop_ty {
+                                self.type_check(m.key.span(), &ty, &expected)?;
+                                self.cast(&mut value, &ty, &expected);
+                                // use expected type
+                                expected
+                            } else {
+                                ty
+                            };
 
                             spans.push(m.key.span());
-                            tys.push((key.clone(), ty));
-                            values.push((key, value));
+                            // push property
+                            tys.push(PropertyDesc {
+                                name: propname.clone(),
+                                ty: ty,
+                                readonly: false,
+                            });
+                            // push expression
+                            values.push((propname, value));
                         }
                         swc::Prop::Getter(g) => {
                             // todo: getter
@@ -2038,6 +2108,7 @@ impl Transformer {
             }
         }
 
+        // check for duplicated property names
         for (n, (p1, _)) in values.iter().enumerate() {
             for (i, (p2, _)) in values.iter().enumerate() {
                 if n != i && p1 == p2 {
@@ -2046,40 +2117,44 @@ impl Transformer {
             }
         }
 
-        if let Some(obj_ty) = expected_obj_ty {
-            for (i, (p1, ty)) in obj_ty.iter().enumerate() {
-                if let Some((_p2, e)) = values.iter_mut().find(|(p2, _)| p1 == p2) {
-                    // type check
-                    self.type_check(spans[i], &tys[i].1, ty)?;
-
-                    if &tys[i].1 != ty {
-                        self.cast(e, &tys[i].1, ty);
-                    }
-                } else {
-                    if let Ok(()) = self.type_check(DUMMY_SP, &Type::Undefined, ty) {
-                        // create an undefined
-                        let mut e = Expr::Undefined;
-                        // cast undefined to type
-                        self.cast(&mut e, &Type::Undefined, ty);
-                        // push it to values
-                        values.push((p1.clone(), e))
-                    } else {
-                        return Err(Error::syntax_error(
-                            obj.span,
-                            format!("missing property '{}'", p1),
+        // add missing properties to the object
+        if let Some(expected) = expected_ty {
+            // loop through properties of expected type
+            for p in self.get_properties(expected) {
+                // missing property
+                if values.iter().find(|(key, _)| key == &p.name).is_none() {
+                    // undefined can be assigned to the property
+                    if self.type_check(DUMMY_SP, &Type::Undefined, &p.ty).is_ok() {
+                        // add property with value undefined
+                        values.push((
+                            p.name.clone(),
+                            Expr::Cast(Box::new(Expr::Undefined), p.ty.clone()),
                         ));
+                        // add property to type
+                        tys.push(p.clone());
                     }
                 }
             }
-        };
+        }
 
-        let ty = if let Some(obj_ty) = expected_obj_ty {
-            Type::LiteralObject(obj_ty.clone())
+        // sort the descriptors
+        tys.sort();
+
+        // object expression
+        let mut obj_expr = Expr::Object { props: values };
+        let obj_ty = Type::LiteralObject(tys.into());
+
+        // type check
+        let ty = if let Some(expected) = expected_ty {
+            self.type_check(obj.span, &obj_ty, &expected)?;
+            self.cast(&mut obj_expr, &obj_ty, &expected);
+
+            expected.clone()
         } else {
-            Type::LiteralObject(tys.into_boxed_slice())
+            obj_ty
         };
 
-        return Ok((Expr::Object { props: values }, ty));
+        return Ok((obj_expr, ty));
     }
 
     fn translate_optchain(&mut self, n: &swc::OptChainExpr) -> Result<(Expr, Type)> {
@@ -2103,14 +2178,29 @@ impl Transformer {
                 let mut callee = None;
                 let mut func_ty = None;
 
+                let ty_args = if let Some(type_args) = &c.type_args {
+                    let mut args = Vec::new();
+
+                    for t in &type_args.params {
+                        args.push(self.translate_type(&t)?)
+                    }
+
+                    args
+                } else {
+                    Vec::new()
+                };
+
                 // function call
                 if let Some(ident) = c.callee.as_ident() {
-                    match self.context.find(&ident.sym) {
-                        Some(Binding::Function(f)) => {
-                            if let Some(args) = &c.type_args {
+                    // find the function
+                    match self.context.find_value_binding(&ident.sym) {
+                        // a function
+                        Some(ValueBinding::Function(f)) => {
+                            // type arguments not allowed
+                            if !ty_args.is_empty() {
                                 return Err(Error::syntax_error(
-                                    args.span,
-                                    "expected 0 type arguments",
+                                    c.type_args.as_ref().unwrap().span,
+                                    "Type '' has no signatures for which the type argument list is applicable.",
                                 ));
                             }
 
@@ -2127,7 +2217,8 @@ impl Transformer {
                             callee = Some(Callee::Function(id));
                             func_ty = Some(ty);
                         }
-                        Some(Binding::GenericFunction(_id)) => {
+                        // a generic function
+                        Some(ValueBinding::GenericFunction(_id)) => {
                             todo!("generic function")
                         }
                         _ => {}
@@ -2136,6 +2227,7 @@ impl Transformer {
 
                 // expression
                 if callee.is_none() {
+                    // translate the callee as expression
                     let (expr, ty) = self.translate_expr(&c.callee, None)?;
 
                     let func = match &ty {
@@ -2167,11 +2259,11 @@ impl Transformer {
                             func.unwrap()
                         }
                         Type::Undefined => {
-                            // will never call
+                            // will never call, return the expression
                             return Ok((expr, Type::Undefined));
                         }
                         Type::Null => {
-                            // will never call
+                            // will never call, return the expression
                             return Ok((expr, Type::Null));
                         }
                         _ => {
@@ -2192,12 +2284,10 @@ impl Transformer {
                         optional,
                     } = expr
                     {
-                        if optional {
-                            return Err(Error::syntax_error(c.span, "callee cannot be optional"));
-                        }
                         callee = Some(Callee::Member {
                             object: *object,
                             prop: key,
+                            optional: optional,
                         });
                     } else {
                         callee = Some(Callee::Expr(expr));

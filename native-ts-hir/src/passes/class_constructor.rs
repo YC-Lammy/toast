@@ -1,9 +1,9 @@
 use native_ts_parser::swc_core::common::{Span, DUMMY_SP};
 
 use crate::{
-    ast::visit::{visit_stmts, Visitor},
-    ast::{AssignOp, Callee, Expr, Program, PropNameOrExpr},
     error::Error,
+    hir::visit::{visit_stmts, Visitor},
+    hir::{AssignOp, Callee, Expr, Program, PropNameOrExpr},
     PropName,
 };
 
@@ -359,7 +359,7 @@ impl Visitor for ClassInitialisedPass {
 
     fn on_member_update(
         &mut self,
-        _update_op: crate::ast::UpdateOp,
+        _update_op: crate::hir::UpdateOp,
         object: &Expr,
         key: &PropNameOrExpr,
     ) {

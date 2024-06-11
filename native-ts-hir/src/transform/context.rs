@@ -1,14 +1,33 @@
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 use native_ts_parser::swc_core::common::{Span, DUMMY_SP};
 
 use crate::ast::*;
 use crate::common::{
-    AliasId, ClassId, EnumId, FunctionId, GenericId, InterfaceId, ModuleId, VariableId,
+    AliasId, ClassId, EnumId, FunctionId, GenericId, InterfaceId, ModuleId, VariableId, OR,
 };
+use crate::symbol_table::SymbolTable;
+
+pub enum ClassBinding {
+    Generic(ClassId),
+    Class(ClassId),
+}
+
+pub enum TypeBinding {
+    GenericInterface(InterfaceId),
+    Interface(InterfaceId),
+
+    Enum(EnumId),
+
+    GenericTypeAlias(AliasId),
+    TypeAlias(AliasId),
+
+    Generic(GenericId),
+}
 
 #[derive(Clone)]
-pub enum Binding {
+pub enum ValueBinding {
     /// a variable, can be let, var or const
     Var {
         /// const is not writable
@@ -26,28 +45,16 @@ pub enum Binding {
 
     GenericFunction(FunctionId),
     Function(FunctionId),
-
-    GenericClass(ClassId),
-    Class(ClassId),
-
-    GenericInterface(InterfaceId),
-    Interface(InterfaceId),
-
-    Enum(EnumId),
-
-    GenericTypeAlias(AliasId),
-    TypeAlias(AliasId),
-
-    NameSpace(ModuleId),
-
-    Generic(GenericId),
 }
 
 pub struct Scope {
     /// the id of function where the scope belongs to
     pub function_id: FunctionId,
-    /// generic classes
-    pub bindings: HashMap<String, Binding>,
+
+    class_bindings: HashMap<String, ClassBinding>,
+    type_bindings: HashMap<String, TypeBinding>,
+    value_bindings: HashMap<String, ValueBinding>,
+    namespace_binding: HashMap<String, ModuleId>,
 }
 
 pub struct GenericRegister<ID, BASE> {
@@ -56,22 +63,29 @@ pub struct GenericRegister<ID, BASE> {
 }
 
 pub struct Context {
+    pub symbol_table: SymbolTable,
+
     pub generic_classes: HashMap<ClassId, GenericRegister<ClassId, ()>>,
-    pub classes: HashMap<ClassId, ClassType>,
-
     pub generic_functions: HashMap<FunctionId, GenericRegister<FunctionId, GenericFunction>>,
-    pub functions: HashMap<FunctionId, Function>,
-
     pub generic_interfaces: HashMap<InterfaceId, GenericRegister<InterfaceId, ()>>,
-    pub interfaces: HashMap<InterfaceId, InterfaceType>,
-
-    pub enums: HashMap<EnumId, EnumType>,
-
     pub generic_alias: HashMap<AliasId, ()>,
     pub alias: HashMap<AliasId, Type>,
 
     global_func: FunctionId,
     scopes: Vec<Scope>,
+}
+
+impl Deref for Context {
+    type Target = SymbolTable;
+    fn deref(&self) -> &Self::Target {
+        &self.symbol_table
+    }
+}
+
+impl DerefMut for Context {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.symbol_table
+    }
 }
 
 impl Context {
@@ -82,18 +96,19 @@ impl Context {
         // construct scope
         let global_scope = Scope {
             function_id,
-            bindings: Default::default(),
+
+            class_bindings: Default::default(),
+            type_bindings: Default::default(),
+            value_bindings: Default::default(),
+            namespace_binding: Default::default(),
         };
 
         // construct context
         let mut s = Self {
+            symbol_table: SymbolTable::default(),
             generic_classes: Default::default(),
-            classes: Default::default(),
             generic_functions: Default::default(),
-            functions: Default::default(),
             generic_interfaces: Default::default(),
-            interfaces: Default::default(),
-            enums: Default::default(),
             generic_alias: Default::default(),
             alias: Default::default(),
             global_func: function_id,
@@ -128,7 +143,11 @@ impl Context {
     ) -> bool {
         self.scopes.push(Scope {
             function_id: id,
-            bindings: HashMap::new(),
+
+            class_bindings: Default::default(),
+            type_bindings: Default::default(),
+            value_bindings: Default::default(),
+            namespace_binding: Default::default(),
         });
 
         if !self.functions.contains_key(&id) {
@@ -169,9 +188,9 @@ impl Context {
             .get_mut(&poped_scope.function_id)
             .expect("invalid function");
 
-        for (_name, binding) in &poped_scope.bindings {
+        for (_name, binding) in &poped_scope.value_bindings {
             match binding {
-                Binding::Var { id, ty: _, .. } | Binding::Using { id, .. } => {
+                ValueBinding::Var { id, ty: _, .. } | ValueBinding::Using { id, .. } => {
                     func.stmts.push(Stmt::DropVar(*id));
                 }
                 _ => {}
@@ -185,6 +204,7 @@ impl Context {
         let scope = self.scopes.last().expect("invalid scope");
 
         return self
+            .symbol_table
             .functions
             .get_mut(&scope.function_id)
             .expect("invalid function");
@@ -195,7 +215,11 @@ impl Context {
 
         self.scopes.push(Scope {
             function_id: func,
-            bindings: HashMap::new(),
+
+            class_bindings: Default::default(),
+            type_bindings: Default::default(),
+            value_bindings: Default::default(),
+            namespace_binding: Default::default(),
         });
     }
 
@@ -207,9 +231,9 @@ impl Context {
             .get_mut(&poped_scope.function_id)
             .expect("invalid function");
 
-        for (_name, binding) in &poped_scope.bindings {
+        for (_name, binding) in &poped_scope.value_bindings {
             match binding {
-                Binding::Var { id, ty: _, .. } | Binding::Using { id, .. } => {
+                ValueBinding::Var { id, ty: _, .. } | ValueBinding::Using { id, .. } => {
                     func.stmts.push(Stmt::DropVar(*id));
                 }
                 _ => {}
@@ -218,7 +242,8 @@ impl Context {
     }
 
     pub fn declare_global(&mut self, id: VariableId, ty: Type) {
-        self.functions
+        self.symbol_table
+            .functions
             .get_mut(&self.global_func)
             .expect("invalid function")
             .variables
@@ -231,95 +256,327 @@ impl Context {
             );
     }
 
-    pub fn declare(&mut self, name: &str, binding: Binding) -> bool {
+    pub fn bind_class(&mut self, name: &str, id: ClassId) -> bool {
         let scope = self.scopes.last_mut().expect("invalid scope");
 
-        if let Some(bind) = scope.bindings.get(name) {
-            if let Binding::Var {
-                redeclarable,
-                id: varid,
-                ty: ty1,
-                ..
-            } = bind
-            {
-                if *redeclarable {
-                    // it is only valid if new binding is both writable and redeclarable
-                    match &binding {
-                        Binding::Var {
-                            writable: true,
-                            redeclarable: true,
-                            ty: ty2,
-                            id,
-                        } => {
-                            if ty1 != ty2 {
-                                return false;
-                            }
+        scope
+            .class_bindings
+            .insert(name.to_string(), ClassBinding::Class(id))
+            .is_none()
+    }
 
-                            // copy the old variable id
-                            let varid = *varid;
-                            let new_id = *id;
-                            let ty = ty2.clone();
+    pub fn bind_generic_class(&mut self, name: &str, id: ClassId) -> bool {
+        let scope = self.scopes.last_mut().expect("invalid scope");
 
-                            // replace the current binding
-                            scope.bindings.insert(name.to_string(), binding);
-                            // drop the variable
-                            self.func().stmts.push(Stmt::DropVar(varid));
+        scope
+            .class_bindings
+            .insert(name.to_string(), ClassBinding::Class(id))
+            .is_none()
+    }
 
-                            // register the new variable
-                            self.func().variables.insert(
-                                new_id,
-                                VariableDesc {
-                                    ty: ty,
-                                    is_heap: false,
-                                },
-                            );
+    pub fn bind_variable(
+        &mut self,
+        name: &str,
+        id: VariableId,
+        ty: Type,
+        writable: bool,
+        redeclarable: bool,
+    ) -> bool {
+        // insert variable
+        self.func().variables.insert(
+            id,
+            VariableDesc {
+                ty: ty.clone(),
+                is_heap: false,
+            },
+        );
 
-                            return true;
-                        }
-                        _ => {}
-                    }
-                }
-            };
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
 
+        // cannot be mixed with a class
+        if scope.class_bindings.contains_key(name) {
             return false;
         }
 
-        match &binding {
-            Binding::Var { id, ty, .. } | Binding::Using { id, ty, .. } => {
-                let id = *id;
-                let ty = ty.clone();
+        // check variable redeclare
+        match scope.value_bindings.get_mut(name) {
+            // variable declared
+            Some(ValueBinding::Var {
+                id: old_id,
+                redeclarable: old_redeclarable,
+                ty: old_ty,
+                ..
+            }) => {
+                if !redeclarable || !*old_redeclarable {
+                    return false;
+                }
+                if &ty != old_ty {
+                    return false;
+                }
 
-                self.func().variables.insert(
-                    id,
-                    VariableDesc {
-                        ty: ty,
-                        is_heap: false,
-                    },
-                );
+                //replace old id
+                let old_id = core::mem::replace(old_id, id);
+
+                // drop the old variable
+                self.func().stmts.push(Stmt::DropVar(old_id));
+
+                return true;
             }
-            _ => {}
+            // no binding
+            None => {
+                return scope
+                    .value_bindings
+                    .insert(
+                        name.to_string(),
+                        ValueBinding::Var {
+                            writable: writable,
+                            redeclarable: redeclarable,
+                            id: id,
+                            ty: ty,
+                        },
+                    )
+                    .is_none();
+            }
+            _ => return false,
         }
-
-        self.scopes
-            .last_mut()
-            .expect("invalide scope")
-            .bindings
-            .insert(name.to_string(), binding);
-
-        return true;
     }
 
-    pub fn find(&mut self, name: &str) -> Option<&Binding> {
+    pub fn bind_using(&mut self, name: &str, id: VariableId, ty: Type, is_await: bool) -> bool {
+        // insert variable
+        self.func().variables.insert(
+            id,
+            VariableDesc {
+                ty: ty.clone(),
+                is_heap: false,
+            },
+        );
+
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // cannot be mixed with a class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .value_bindings
+            .insert(
+                name.to_string(),
+                ValueBinding::Using {
+                    is_await,
+                    id: id,
+                    ty: ty,
+                },
+            )
+            .is_none();
+    }
+
+    pub fn bind_function(&mut self, name: &str, id: FunctionId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // cannot be mixed with a class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .value_bindings
+            .insert(name.to_string(), ValueBinding::Function(id))
+            .is_none();
+    }
+
+    pub fn bind_generic_function(&mut self, name: &str, id: FunctionId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // cannot be mixed with a class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .value_bindings
+            .insert(name.to_string(), ValueBinding::GenericFunction(id))
+            .is_none();
+    }
+
+    pub fn bind_interface(&mut self, name: &str, id: InterfaceId) -> Result<Option<InterfaceId>, ()> {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // interface cannot be mixed with class
+        if scope.class_bindings.contains_key(name) {
+            return Err(());
+        }
+
+        match scope.type_bindings.get(name){
+            Some(TypeBinding::Interface(id)) => return Ok(Some(*id)),
+            None => {},
+            _ => return Err(())
+        }
+
+        scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::Interface(id));
+
+        return Ok(None)
+    }
+
+    pub fn bind_generic_interface(&mut self, name: &str, id: InterfaceId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // interface cannot be mixed with class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::GenericInterface(id))
+            .is_none();
+    }
+
+    pub fn bind_enum(&mut self, name: &str, id: EnumId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // enum cannot be mixed with class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::Enum(id))
+            .is_none();
+    }
+
+    pub fn bind_type_alias(&mut self, name: &str, id: AliasId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // type cannot be merged with class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::TypeAlias(id))
+            .is_none();
+    }
+
+    pub fn bind_generic_type_alias(&mut self, name: &str, id: AliasId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // type cannot be merged with class
+        if scope.class_bindings.contains_key(name) {
+            return false;
+        }
+
+        return scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::GenericTypeAlias(id))
+            .is_none();
+    }
+
+    pub fn bind_generic(&mut self, name: &str, id: GenericId) -> bool {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        if scope.class_bindings.contains_key(name){
+            return false
+        }
+
+        return scope
+            .type_bindings
+            .insert(name.to_string(), TypeBinding::Generic(id))
+            .is_none();
+    }
+
+    pub fn bind_namespace(&mut self, name: &str, id: ModuleId) -> Result<Option<ModuleId>, ()> {
+        // get last scope
+        let scope = self.scopes.last_mut().expect("invalid scope");
+
+        // namespace cannot be merged with value
+        if scope.value_bindings.contains_key(name){
+            return Err(())
+        }
+
+        if let Some(id) = scope.namespace_binding.get(name){
+            return Ok(Some(*id))
+        }
+        scope
+            .namespace_binding
+            .insert(name.to_string(), id);
+
+        return Ok(None)
+    }
+
+    pub fn has_binding(&self, name: &str) -> bool {
+        debug_assert!(!self.scopes.is_empty());
+
+        for scope in self.scopes.iter().rev() {
+            if scope.class_bindings.contains_key(name)
+                || scope.type_bindings.contains_key(name)
+                || scope.value_bindings.contains_key(name)
+                || scope.namespace_binding.contains_key(name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// find a class from identifier
+    pub fn find_class_binding(&self, name: &str) -> Option<&ClassBinding> {
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        for scope in self.scopes.iter().rev() {
+            if let Some(class) = scope.class_bindings.get(name) {
+                return Some(class);
+            }
+        }
+        return None;
+    }
+
+    /// find a type from identifier
+    pub fn find_type_binding(&self, name: &str) -> Option<&TypeBinding> {
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        for scope in self.scopes.iter().rev() {
+            if let Some(bind) = scope.type_bindings.get(name) {
+                return Some(bind);
+            };
+        }
+
+        return None;
+    }
+
+    /// find value from identifier
+    pub fn find_value_binding(&mut self, name: &str) -> Option<&ValueBinding> {
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
         let current_func_id = self.scopes.last().unwrap().function_id;
 
         for scope in self.scopes.iter().rev() {
-            if let Some(bind) = scope.bindings.get(name) {
+            if let Some(bind) = scope.value_bindings.get(name) {
                 match bind {
-                    Binding::Var { id, .. } => {
+                    ValueBinding::Var { id, .. } => {
                         // set variable to heap
                         if scope.function_id != current_func_id {
                             // get the function that owns the
                             let func = self
+                                .symbol_table
                                 .functions
                                 .get_mut(&scope.function_id)
                                 .expect("invalid function");
@@ -334,7 +591,7 @@ impl Context {
 
                         return Some(bind);
                     }
-                    Binding::Using { .. } => {
+                    ValueBinding::Using { .. } => {
                         // only the owned scope can see the variable
                         if scope.function_id != current_func_id {
                             return None;
@@ -349,26 +606,114 @@ impl Context {
         return None;
     }
 
+    /// find a namespace from identifier
+    pub fn find_namespace_binding(&self, name: &str) -> Option<ModuleId> {
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        for scope in self.scopes.iter().rev() {
+            if let Some(id) = scope.namespace_binding.get(name) {
+                return Some(*id);
+            }
+        }
+
+        return None;
+    }
+
+    pub fn find_namespace_or_value_binding(&mut self, name: &str) -> Option<OR<ModuleId, &ValueBinding>>{
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        let current_func_id = self.scopes.last().unwrap().function_id;
+
+        for scope in self.scopes.iter().rev(){
+            if let Some(id) = scope.namespace_binding.get(name) {
+                return Some(OR::A(*id))
+            }
+
+            if let Some(bind) = scope.value_bindings.get(name) {
+                match bind {
+                    ValueBinding::Var { id, .. } => {
+                        // set variable to heap
+                        if scope.function_id != current_func_id {
+                            // get the function that owns the
+                            let func = self
+                                .symbol_table
+                                .functions
+                                .get_mut(&scope.function_id)
+                                .expect("invalid function");
+
+                            // set the variable to heap
+                            let desc = func.variables.get_mut(&id).expect("invalide varaibel id");
+                            // set variable to a heap variable
+                            desc.is_heap = true;
+                        }
+
+                        // capture variable
+
+                        return Some(OR::B(bind));
+                    }
+                    ValueBinding::Using { .. } => {
+                        // only the owned scope can see the variable
+                        if scope.function_id != current_func_id {
+                            return None;
+                        }
+                        return Some(OR::B(bind));
+                    }
+                    _ => return Some(OR::B(bind)),
+                }
+            }
+        }
+
+        return None
+    }
+
     pub fn get_func_id(&self, name: &str) -> FunctionId {
-        match self.scopes.last().unwrap().bindings.get(name) {
-            Some(Binding::Function(id)) => *id,
-            Some(Binding::GenericFunction(id)) => *id,
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        match self.scopes.last().unwrap().value_bindings.get(name) {
+            Some(ValueBinding::Function(id)) => *id,
+            Some(ValueBinding::GenericFunction(id)) => *id,
             _ => unreachable!(),
         }
     }
+
     pub fn get_class_id(&self, name: &str) -> ClassId {
-        match self.scopes.last().unwrap().bindings.get(name) {
-            Some(Binding::Class(id)) => *id,
-            Some(Binding::GenericClass(id)) => *id,
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        match self.scopes.last().unwrap().class_bindings.get(name) {
+            Some(ClassBinding::Class(id)) => *id,
+            Some(ClassBinding::Generic(id)) => *id,
             _ => unreachable!(),
         }
     }
     pub fn get_interface_id(&self, name: &str) -> InterfaceId {
-        match self.scopes.last().unwrap().bindings.get(name) {
-            Some(Binding::Interface(id)) => *id,
-            Some(Binding::GenericInterface(id)) => *id,
+        // scopes must not be empty
+        debug_assert!(!self.scopes.is_empty());
+
+        match self.scopes.last().unwrap().type_bindings.get(name) {
+            Some(TypeBinding::Interface(id)) => *id,
+            Some(TypeBinding::GenericInterface(id)) => *id,
             _ => unreachable!(),
         }
+    }
+
+    pub fn get_variable_name_ty(&self, varid: VariableId) -> Option<(&str, &Type)> {
+        // loop through scopes
+        for scope in self.scopes.iter().rev() {
+            // loop through value bindings
+            for (name, value) in &scope.value_bindings {
+                match value {
+                    ValueBinding::Var { id, ty, .. } if id == &varid => return Some((&name, ty)),
+                    ValueBinding::Using { id, ty, .. } if id == &varid => return Some((&name, ty)),
+                    _ => {}
+                }
+            }
+        }
+
+        return None;
     }
     /*
     pub fn get_variable_id(&self, name: &str) -> VariableId{

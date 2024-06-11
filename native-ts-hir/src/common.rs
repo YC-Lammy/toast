@@ -11,6 +11,17 @@ impl FunctionId {
     }
 }
 
+/// function id
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GenericFunctionId(pub(super) usize);
+
+impl GenericFunctionId {
+    pub fn new() -> Self {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        Self(COUNT.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClassId(pub(super) usize);
 
@@ -22,9 +33,29 @@ impl ClassId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GenericClassId(pub(super) usize);
+
+impl GenericClassId {
+    pub fn new() -> Self {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        Self(COUNT.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InterfaceId(pub(super) usize);
 
 impl InterfaceId {
+    pub fn new() -> Self {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        Self(COUNT.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GenericInterfaceId(pub(super) usize);
+
+impl GenericInterfaceId {
     pub fn new() -> Self {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
         Self(COUNT.fetch_add(1, Ordering::SeqCst))
@@ -62,6 +93,16 @@ impl AliasId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GenericAliasId(pub(super) usize);
+
+impl GenericAliasId {
+    pub fn new() -> Self {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        Self(COUNT.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EnumId(pub(super) usize);
 
 impl EnumId {
@@ -71,7 +112,7 @@ impl EnumId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId(pub(super) usize);
 
 impl ModuleId {

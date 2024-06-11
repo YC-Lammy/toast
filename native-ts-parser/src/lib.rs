@@ -11,7 +11,7 @@ pub use swc_core::common::SourceMap;
 pub mod config;
 
 /// unique id of module
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId(usize);
 
 /// a parsed module

@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Program, Type};
+use crate::hir::{Expr, Program, Type};
 
 pub fn run(program: &mut Program) {
     for (_, class) in &mut program.table.classes {
@@ -16,7 +16,7 @@ pub fn create_default_initialiser(ty: &Type) -> Option<Expr> {
         Type::LiteralBigint(i) => Some(Expr::Bigint(*i)),
         Type::LiteralBool(b) => Some(Expr::Bool(*b)),
         Type::LiteralInt(i) => Some(Expr::Int(*i)),
-        Type::LiteralNumber(n) => Some(Expr::Number(*n)),
+        Type::LiteralNumber(n) => Some(Expr::Number(n.0)),
         Type::LiteralString(s) => Some(Expr::String(s.to_string())),
         Type::Null => Some(Expr::Null),
         Type::Undefined => Some(Expr::Undefined),
