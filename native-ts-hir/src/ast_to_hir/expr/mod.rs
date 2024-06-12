@@ -212,7 +212,13 @@ impl Transformer {
             Expr::Undefined
         };
         // for now use undefined
-        Ok((Expr::Yield(Box::new(arg)), Type::Undefined))
+        Ok((
+            Expr::Yield {
+                span: expr.span,
+                value: Box::new(arg),
+            },
+            Type::Undefined,
+        ))
     }
 
     fn translate_seq_expr(
@@ -240,7 +246,13 @@ impl Transformer {
             return Ok((Expr::Undefined, Type::Undefined));
         }
 
-        return Ok((Expr::Seq { seq: seq }, ty));
+        return Ok((
+            Expr::Seq {
+                span: s.span,
+                seq: seq,
+            },
+            ty,
+        ));
     }
 
     pub fn translate_ts_as_expr(&mut self, expr: &swc::TsAsExpr) -> Result<(Expr, Type)> {
@@ -273,7 +285,10 @@ impl Transformer {
         Ok((Expr::AssertNonNull(Box::new(e)), ty))
     }
 
-    pub fn translate_ts_satisfies_expr(&mut self, expr: &swc::TsSatisfiesExpr) -> Result<(Expr, Type)>{
+    pub fn translate_ts_satisfies_expr(
+        &mut self,
+        expr: &swc::TsSatisfiesExpr,
+    ) -> Result<(Expr, Type)> {
         let ty = self.translate_type(&expr.type_ann)?;
         let (e, expr_ty) = self.translate_expr(&expr.expr, None)?;
         // check satisfies
@@ -282,7 +297,10 @@ impl Transformer {
         Ok((e, expr_ty))
     }
 
-    pub fn translate_ts_type_assert_expr(&mut self, expr: &swc::TsTypeAssertion) -> Result<(Expr, Type)>{
+    pub fn translate_ts_type_assert_expr(
+        &mut self,
+        expr: &swc::TsTypeAssertion,
+    ) -> Result<(Expr, Type)> {
         let ty = self.translate_type(&expr.type_ann)?;
         // translate expr will handle the cast
         let (expr, ty) = self.translate_expr(&expr.expr, Some(&ty))?;

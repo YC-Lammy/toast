@@ -14,6 +14,10 @@ use super::expr::MaybeTranslatedExpr;
 use super::Transformer;
 use super::ValueBinding;
 
+mod do_while;
+mod for_in_loop;
+mod for_of_loop;
+
 type Result<T> = std::result::Result<T, Error>;
 
 impl Transformer {
@@ -196,7 +200,13 @@ impl Transformer {
                 None
             };
             // translate the variable declare with pattern and initialiser
-            ids.extend_from_slice(&self.translate_pat_var_decl(decl.kind, &d.name, init, None)?)
+            ids.extend_from_slice(&self.translate_pat_var_decl(
+                d.span,
+                decl.kind.into(),
+                &d.name,
+                init,
+                None,
+            )?)
         }
         // return ids
         return Ok(ids);
@@ -204,16 +214,19 @@ impl Transformer {
 
     fn translate_pat_var_decl(
         &mut self,
-        kind: swc::VarDeclKind,
+        span: Span,
+        kind: VarKind,
         pat: &swc::Pat,
         init: Option<MaybeTranslatedExpr>,
         parent_ann: Option<(Type, Span)>,
     ) -> Result<Vec<VariableId>> {
         match pat {
             // simple variable
-            swc::Pat::Ident(id) => Ok(vec![
-                self.translate_ident_var_dec(kind, id, init, parent_ann)?
-            ]),
+            swc::Pat::Ident(id) => {
+                Ok(vec![self.translate_ident_var_dec(
+                    span, kind, id, init, parent_ann,
+                )?])
+            }
             // destructive array pattern
             swc::Pat::Array(a) => self.translate_array_pat_decl(kind, a, init, parent_ann),
             // destructive object pattern
@@ -245,7 +258,8 @@ impl Transformer {
 
     fn translate_ident_var_dec(
         &mut self,
-        kind: swc::VarDeclKind,
+        span: Span,
+        kind: VarKind,
         ident: &swc::BindingIdent,
         init: Option<MaybeTranslatedExpr>,
         parent_ann: Option<(Type, Span)>,
@@ -266,7 +280,7 @@ impl Transformer {
         };
 
         // 'const' declarations must be initialized.
-        if kind == swc::VarDeclKind::Const && init.is_none() {
+        if kind == VarKind::Const && init.is_none() {
             return Err(Error::syntax_error(
                 ident.span,
                 "'const' declarations must be initialized.",
@@ -292,7 +306,11 @@ impl Transformer {
                     Type::LiteralBool(_) => ty = Some(Type::Bool),
                     Type::LiteralInt(_) | Type::Int => {
                         ty = Some(Type::Number);
-                        init = Expr::Cast(Box::new(init), Type::Number);
+                        init = Expr::Cast {
+                            span: DUMMY_SP,
+                            value: Box::new(init),
+                            ty: Type::Number,
+                        };
                     }
                     Type::LiteralNumber(_) => ty = Some(Type::Number),
                     Type::LiteralString(_) => ty = Some(Type::String),
@@ -311,15 +329,25 @@ impl Transformer {
             return Err(Error::syntax_error(ident.span, "missing type annotation"));
         }
 
+        let bind_success = match kind {
+            VarKind::Using | VarKind::AwaitUsing => self.context.bind_using(
+                &ident.sym,
+                varid,
+                ty.as_ref().unwrap().clone(),
+                kind == VarKind::AwaitUsing,
+            ),
+            _ => self.context.bind_variable(
+                &ident.sym,
+                varid,
+                ty.as_ref().unwrap().clone(),
+                kind != VarKind::Const,
+                kind == VarKind::Var,
+            ),
+        };
+
         // declare variable
-        if !self.context.bind_variable(
-            &ident.sym,
-            varid,
-            ty.as_ref().unwrap().clone(),
-            kind != swc::VarDeclKind::Const,
-            kind == swc::VarDeclKind::Var,
-        ) {
-            if kind == swc::VarDeclKind::Var {
+        if !bind_success {
+            if kind == VarKind::Var {
                 if let Some(ValueBinding::Var {
                     redeclarable,
                     ty: var_ty,
@@ -338,11 +366,7 @@ impl Transformer {
         }
 
         self.context.func().stmts.push(Stmt::DeclareVar {
-            kind: match kind {
-                swc::VarDeclKind::Const => VarKind::Const,
-                swc::VarDeclKind::Let => VarKind::Let,
-                swc::VarDeclKind::Var => VarKind::Var,
-            },
+            kind: kind,
             id: varid,
             ty: ty.unwrap(),
         });
@@ -352,6 +376,7 @@ impl Transformer {
                 .func()
                 .stmts
                 .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                    span: span,
                     op: crate::hir::AssignOp::Assign,
                     variable: varid,
                     value: Box::new(init),
@@ -363,7 +388,7 @@ impl Transformer {
 
     fn tranlslate_object_pat_decl(
         &mut self,
-        kind: swc::VarDeclKind,
+        kind: VarKind,
         obj: &swc::ObjectPat,
         init: Option<MaybeTranslatedExpr>,
         // annotation given by parent pattern
@@ -453,10 +478,12 @@ impl Transformer {
                     // initialiser must have property
                     if let Some(prop_ty) = self.type_has_property(&init_ty, &key, false) {
                         let id = self.translate_pat_var_decl(
+                            kv.span(),
                             kind,
                             &kv.value,
                             Some(MaybeTranslatedExpr::Translated(
                                 Expr::Member {
+                                    span: kv.span(),
                                     object: Box::new(Expr::ReadStack),
                                     key: PropNameOrExpr::PropName(key.clone()),
                                     optional: false,
@@ -512,6 +539,7 @@ impl Transformer {
                         Some(prop_ty) => {
                             // member expression
                             let mut member_expr = Expr::Member {
+                                span: a.span,
                                 object: Box::new(Expr::ReadStack),
                                 key: PropNameOrExpr::PropName(name.clone()),
                                 optional: default_value.is_some(),
@@ -534,17 +562,20 @@ impl Transformer {
                                 };
 
                                 // select expression
-                                let expr = Expr::Cast(
-                                    Box::new(Expr::Bin {
+                                let expr = Expr::Cast {
+                                    span: a.span,
+                                    value: Box::new(Expr::Bin {
+                                        span: a.span,
                                         op: BinOp::Nullish,
                                         left: Box::new(member_expr),
                                         right: Box::new(default_value),
                                     }),
-                                    ty.clone(),
-                                );
+                                    ty: ty.clone(),
+                                };
 
                                 // translate var declare
                                 let id = self.translate_ident_var_dec(
+                                    a.span,
                                     kind,
                                     &a.key,
                                     Some(MaybeTranslatedExpr::Translated(expr, ty)),
@@ -565,6 +596,7 @@ impl Transformer {
 
                                 // simple declare
                                 let id = self.translate_ident_var_dec(
+                                    a.span,
                                     kind,
                                     &a.key,
                                     Some(MaybeTranslatedExpr::Translated(member_expr, ty)),
@@ -580,6 +612,7 @@ impl Transformer {
                             if let Some((default_value, default_ty)) = default_value {
                                 // declare variable
                                 let id = self.translate_ident_var_dec(
+                                    a.span,
                                     kind,
                                     &a.key,
                                     Some(MaybeTranslatedExpr::Translated(
@@ -635,6 +668,7 @@ impl Transformer {
 
                         // member expression
                         let mut expr = Expr::Member {
+                            span: r.span,
                             // read initialiser from stack
                             object: Box::new(Expr::ReadStack),
                             // read property from initialiser
@@ -667,10 +701,14 @@ impl Transformer {
 
                     // construct object expression and type
                     let obj_ty = Type::LiteralObject(props.into());
-                    let obj_expr = Expr::Object { props: exprs };
+                    let obj_expr = Expr::Object {
+                        span: r.span,
+                        props: exprs,
+                    };
 
                     // translate variable declare
                     let id = self.translate_pat_var_decl(
+                        r.span,
                         kind,
                         &r.arg,
                         Some(MaybeTranslatedExpr::Translated(obj_expr, obj_ty)),
@@ -694,7 +732,7 @@ impl Transformer {
 
     fn translate_array_pat_decl(
         &mut self,
-        kind: swc::VarDeclKind,
+        kind: VarKind,
         pat: &swc::ArrayPat,
         init: Option<MaybeTranslatedExpr>,
         // annotation given by parent pattern
@@ -810,12 +848,14 @@ impl Transformer {
                 {
                     // construct member expression
                     let member_expr = Expr::Member {
+                        span: p.span(),
                         object: Box::new(Expr::ReadStack),
                         key: PropNameOrExpr::PropName(PropName::Int(i as _)),
                         optional: false,
                     };
                     // translate pat variable declare
                     let vs = self.translate_pat_var_decl(
+                        p.span(),
                         kind,
                         p,
                         Some(MaybeTranslatedExpr::Translated(member_expr, prop_ty)),
@@ -930,6 +970,7 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: decl.span,
                         op: crate::hir::AssignOp::Assign,
                         variable: varid,
                         value: Box::new(init_expr),
@@ -1013,6 +1054,7 @@ impl Transformer {
         // break if test value is false
         func.stmts.push(Stmt::If {
             test: Box::new(Expr::Unary {
+                span: w.test.span(),
                 op: UnaryOp::LogicalNot,
                 value: Box::new(test),
             }),
@@ -1092,13 +1134,14 @@ impl Transformer {
         self.context.new_scope();
 
         // break if false
-        if let Some(test) = &f.test {
+        if let Some(test_expr) = &f.test {
             // translate break condition
-            let (test, _ty) = self.translate_expr(&test, Some(&Type::Bool))?;
+            let (test, _ty) = self.translate_expr(&test_expr, Some(&Type::Bool))?;
             let func = self.context.func();
             // break if not test
             func.stmts.push(Stmt::If {
                 test: Box::new(Expr::Unary {
+                    span: test_expr.span(),
                     op: crate::hir::UnaryOp::LogicalNot,
                     value: Box::new(test),
                 }),
@@ -1166,6 +1209,7 @@ impl Transformer {
             .func()
             .stmts
             .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                span: f.left.span(),
                 op: crate::hir::AssignOp::Assign,
                 variable: counter,
                 value: Box::new(Expr::Int(0)),
@@ -1192,9 +1236,11 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.right.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_var,
                         value: Box::new(Expr::Member {
+                            span: f.right.span(),
                             object: Box::new(iterable_expr),
                             key: PropNameOrExpr::PropName(PropName::Ident("length".to_string())),
                             optional: false,
@@ -1237,10 +1283,13 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.right.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_var,
                         value: Box::new(Expr::Call {
+                            span: f.right.span(),
                             callee: Box::new(Callee::Member {
+                                span: f.right.span(),
                                 object: iterable_expr,
                                 prop: PropNameOrExpr::PropName(PropName::Symbol(
                                     crate::Symbol::Iterator,
@@ -1266,13 +1315,14 @@ impl Transformer {
                 // break if counter == length
                 self.context.func().stmts.push(Stmt::If {
                     test: Box::new(Expr::Bin {
+                        span: f.left.span(),
                         op: crate::hir::BinOp::Gteq,
                         left: Box::new(Expr::VarLoad {
-                            span: Span::default(),
+                            span: f.left.span(),
                             variable: counter,
                         }),
                         right: Box::new(Expr::VarLoad {
-                            span: Span::default(),
+                            span: f.left.span(),
                             variable: iterator_var,
                         }),
                     }),
@@ -1286,10 +1336,13 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.left.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_result_var,
                         value: Box::new(Expr::Call {
+                            span: f.left.span(),
                             callee: Box::new(Callee::Member {
+                                span: f.right.span(),
                                 object: Expr::VarLoad {
                                     span: Span::default(),
                                     variable: iterator_var,
@@ -1307,6 +1360,7 @@ impl Transformer {
                 // }
                 self.context.func().stmts.push(Stmt::If {
                     test: Box::new(Expr::Member {
+                        span: f.left.span(),
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_result_var,
@@ -1324,13 +1378,15 @@ impl Transformer {
         self.translate_for_head(
             &f.left,
             // counter++
-            Expr::Cast(
-                Box::new(Expr::VarUpdate {
+            Expr::Cast {
+                span: f.left.span(),
+                value: Box::new(Expr::VarUpdate {
+                    span: f.left.span(),
                     op: crate::hir::UpdateOp::SuffixAdd,
                     variable: counter,
                 }),
-                Type::Number,
-            ),
+                ty: Type::Number,
+            },
             Type::Number,
         )?;
 
@@ -1391,6 +1447,7 @@ impl Transformer {
             .func()
             .stmts
             .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                span: f.left.span(),
                 op: crate::hir::AssignOp::Assign,
                 variable: counter,
                 value: Box::new(Expr::Int(0)),
@@ -1428,6 +1485,7 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.left.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_var,
                         value: Box::new(iterable_expr),
@@ -1437,9 +1495,11 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.left.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_result_var,
                         value: Box::new(Expr::Member {
+                            span: f.left.span(),
                             object: Box::new(Expr::VarLoad {
                                 span: Span::default(),
                                 variable: iterator_var,
@@ -1487,10 +1547,13 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.left.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_var,
                         value: Box::new(Expr::Call {
+                            span: f.left.span(),
                             callee: Box::new(Callee::Member {
+                                span: f.right.span(),
                                 object: iterable_expr,
                                 prop: PropNameOrExpr::PropName(PropName::Symbol(
                                     crate::Symbol::Iterator,
@@ -1516,6 +1579,7 @@ impl Transformer {
                 // break if counter == length
                 self.context.func().stmts.push(Stmt::If {
                     test: Box::new(Expr::Bin {
+                        span: f.left.span(),
                         op: crate::hir::BinOp::EqEqEq,
                         left: Box::new(Expr::VarLoad {
                             span: Span::default(),
@@ -1536,10 +1600,13 @@ impl Transformer {
                     .func()
                     .stmts
                     .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                        span: f.left.span(),
                         op: crate::hir::AssignOp::Assign,
                         variable: iterator_result_var,
                         value: Box::new(Expr::Call {
+                            span: f.left.span(),
                             callee: Box::new(Callee::Member {
+                                span: f.right.span(),
                                 object: Expr::VarLoad {
                                     span: Span::default(),
                                     variable: iterator_var,
@@ -1557,6 +1624,7 @@ impl Transformer {
                 // }
                 self.context.func().stmts.push(Stmt::If {
                     test: Box::new(Expr::Member {
+                        span: f.left.span(),
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_result_var,
@@ -1576,12 +1644,14 @@ impl Transformer {
                 self.translate_for_head(
                     &f.left,
                     Expr::Member {
+                        span: f.left.span(),
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_var,
                         }),
                         key: PropNameOrExpr::Expr(
                             Box::new(Expr::VarUpdate {
+                                span: f.left.span(),
                                 op: crate::hir::UpdateOp::SuffixAdd,
                                 variable: counter,
                             }),
@@ -1596,12 +1666,14 @@ impl Transformer {
                 self.translate_for_head(
                     &f.left,
                     Expr::Member {
+                        span: f.left.span(),
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_var,
                         }),
                         key: PropNameOrExpr::Expr(
                             Box::new(Expr::VarUpdate {
+                                span: f.left.span(),
                                 op: crate::hir::UpdateOp::SuffixAdd,
                                 variable: counter,
                             }),
@@ -1617,6 +1689,7 @@ impl Transformer {
                     &f.left,
                     // counter++
                     Expr::Member {
+                        span: f.left.span(),
                         object: Box::new(Expr::VarLoad {
                             span: Span::default(),
                             variable: iterator_result_var,
@@ -1713,7 +1786,11 @@ impl Transformer {
                         self.type_check(ann.span, &ty, &t)?;
 
                         if ty != t {
-                            expr = Expr::Cast(Box::new(expr), t.clone());
+                            expr = Expr::Cast {
+                                span: u.span,
+                                value: Box::new(expr),
+                                ty: t.clone(),
+                            };
                         }
 
                         var_ty = t;
@@ -1744,6 +1821,7 @@ impl Transformer {
                         .func()
                         .stmts
                         .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                            span: u.span,
                             op: crate::hir::AssignOp::Assign,
                             variable: var_id,
                             value: Box::new(expr),
@@ -1768,7 +1846,7 @@ impl Transformer {
                     None => None,
                 };
 
-                self.translate_pat_var_decl(v.kind, &decl.name, init, None)?;
+                self.translate_pat_var_decl(v.span, v.kind.into(), &decl.name, init, None)?;
             }
         }
         return Ok(());

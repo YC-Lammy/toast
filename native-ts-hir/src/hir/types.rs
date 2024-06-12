@@ -3,15 +3,12 @@ use std::sync::Arc;
 
 use native_ts_parser::swc_core::common::Span;
 
-use crate::common::{
-    AliasId, ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId,
-};
+use crate::common::{AliasId, ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId};
 use crate::util::TotalF64;
 use crate::{PropName, Symbol};
 
 use super::generic::GenericFuncType;
 use super::Expr;
-
 
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

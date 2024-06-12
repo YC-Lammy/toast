@@ -74,9 +74,14 @@ impl Transformer {
             // return member expression
             return Ok((
                 Expr::Member {
+                    span: s.span,
                     object: Box::new(
                         // cast this to super
-                        Expr::Cast(Box::new(Expr::This(s.obj.span)), Type::Object(super_class)),
+                        Expr::Cast {
+                            span: s.obj.span,
+                            value: Box::new(Expr::This(s.obj.span)),
+                            ty: Type::Object(super_class),
+                        },
                     ),
                     key: PropNameOrExpr::PropName(prop),
                     optional: false,

@@ -1,0 +1,11 @@
+[package]
+name = "toast-rt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy_static = "*"
+atoi = "*"
+itoa = "*"
+parking_lot = "*"
+bitflags = "*"

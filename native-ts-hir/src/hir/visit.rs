@@ -137,6 +137,20 @@ fn visit_stmts_until(
                 );
                 visitor.on_close_scope();
             }
+            Stmt::ForOfLoop { target, .. } => {
+                visitor.on_expr(&target);
+                visitor.on_new_scope();
+                visit_stmts_until(
+                    stmts,
+                    cursor,
+                    |s| match s {
+                        Stmt::EndLoop => true,
+                        _ => false,
+                    },
+                    visitor,
+                );
+                visitor.on_close_scope();
+            }
             Stmt::EndLoop => unreachable!(),
             Stmt::Return(e) => {
                 visit_expr(&e, visitor);
@@ -245,13 +259,13 @@ fn visit_stmts_until(
 
 fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
     match expr {
-        Expr::Array { values } => {
+        Expr::Array { values, .. } => {
             for v in values {
                 visit_expr(v, visitor)
             }
         }
         Expr::AssertNonNull(e) => visit_expr(e, visitor),
-        Expr::Await(e) => visit_expr(e, visitor),
+        Expr::Await { future, .. } => visit_expr(&future, visitor),
         Expr::Bigint(_) => {}
         Expr::Bin { left, right, .. } => {
             visit_expr(&left, visitor);
@@ -262,6 +276,7 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
             callee,
             args,
             optional,
+            ..
         } => {
             for arg in args {
                 visit_expr(arg, visitor)
@@ -273,6 +288,7 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
                     object,
                     prop,
                     optional: _,
+                    span: _,
                 } => {
                     match prop {
                         PropNameOrExpr::PropName(_) => (),
@@ -285,7 +301,7 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
 
             visitor.on_call(callee, args, *optional);
         }
-        Expr::Cast(e, _) => visit_expr(e, visitor),
+        Expr::Cast { value, .. } => visit_expr(&value, visitor),
         Expr::Closure(_) => (),
         Expr::Function(_) => (),
         Expr::Int(_) => {}
@@ -293,6 +309,7 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
             object,
             key,
             optional,
+            ..
         } => {
             match key {
                 PropNameOrExpr::PropName(_) => {}
@@ -306,6 +323,7 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
             object,
             key,
             value,
+            ..
         } => {
             visit_expr(&value, visitor);
             match key {
@@ -316,7 +334,9 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
 
             visitor.on_member_assign(*op, object, key, value);
         }
-        Expr::MemberUpdate { op, object, key } => {
+        Expr::MemberUpdate {
+            op, object, key, ..
+        } => {
             match key {
                 PropNameOrExpr::PropName(_) => {}
                 PropNameOrExpr::Expr(e, _) => visit_expr(e, visitor),
@@ -326,14 +346,14 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
             visitor.on_member_update(*op, object, key);
         }
         Expr::NamespaceObject(_) => {}
-        Expr::New { class: _, args } => {
+        Expr::New { args, .. } => {
             for arg in args {
                 visit_expr(arg, visitor)
             }
         }
         Expr::Null => {}
         Expr::Number(_) => {}
-        Expr::Object { props } => {
+        Expr::Object { props, .. } => {
             for (_, e) in props {
                 visit_expr(e, visitor)
             }
@@ -342,14 +362,16 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
         Expr::Push(e) => visit_expr(e, visitor),
         Expr::ReadStack => {}
         Expr::Regex() => {}
-        Expr::Seq { seq } => {
+        Expr::Seq { seq, .. } => {
             for e in seq {
                 visit_expr(e, visitor);
             }
         }
         Expr::String(_) => {}
         Expr::Symbol(_) => {}
-        Expr::Ternary { test, left, right } => {
+        Expr::Ternary {
+            test, left, right, ..
+        } => {
             visit_expr(&test, visitor);
             visit_expr(&left, visitor);
             visit_expr(&right, visitor);
@@ -362,16 +384,17 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn Visitor) {
                 visit_expr(e, visitor)
             }
         }
-        Expr::Unary { op: _, value } => visit_expr(&value, visitor),
+        Expr::Unary { value, .. } => visit_expr(&value, visitor),
         Expr::Undefined => {}
         Expr::VarAssign {
             op: _,
             variable: _,
             value,
+            ..
         } => visit_expr(&value, visitor),
         Expr::VarLoad { .. } => {}
         Expr::VarUpdate { .. } => {}
-        Expr::Yield(e) => visit_expr(e, visitor),
+        Expr::Yield { value, .. } => visit_expr(&value, visitor),
     };
 
     visitor.on_expr(expr);

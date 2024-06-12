@@ -1,4 +1,3 @@
-
 mod context;
 mod expr;
 mod hoist;
@@ -10,7 +9,10 @@ mod types;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{atomic::{AtomicUsize, Ordering}, Arc}
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 use context::*;
@@ -198,7 +200,7 @@ impl Transformer {
                     // export default expression
                     swc::ModuleDecl::ExportDefaultExpr(expr) => {
                         // export
-                        self.translate_export_default_expr(&expr.expr)?;
+                        self.translate_export_default_expr(expr.span, &expr.expr)?;
                     }
                     // export declaration
                     swc::ModuleDecl::ExportDecl(decl) => {

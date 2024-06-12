@@ -112,10 +112,11 @@ impl Transformer {
                     self.context
                         .func()
                         .stmts
-                        .push(Stmt::Return(Box::new(Expr::Cast(
-                            Box::new(expr),
-                            expected.unwrap().return_ty.clone(),
-                        ))))
+                        .push(Stmt::Return(Box::new(Expr::Cast {
+                            span: func.span,
+                            value: Box::new(expr),
+                            ty: expected.unwrap().return_ty.clone(),
+                        })))
                 } else {
                     // simply return
                     self.context.func().stmts.push(Stmt::Return(Box::new(expr)));

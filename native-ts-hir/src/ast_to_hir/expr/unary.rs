@@ -21,6 +21,7 @@ impl Transformer {
                 // return expression
                 return Ok((
                     Expr::Unary {
+                        span: u.span,
                         op: crate::hir::UnaryOp::LogicalNot,
                         value: Box::new(expr),
                     },
@@ -43,6 +44,7 @@ impl Transformer {
                         // return unary expression
                         return Ok((
                             Expr::Unary {
+                                span: u.span,
                                 op: if u.op == swc::UnaryOp::Minus {
                                     crate::hir::UnaryOp::Minus
                                 } else {
@@ -89,6 +91,7 @@ impl Transformer {
                 // return expression
                 return Ok((
                     Expr::Unary {
+                        span: u.span,
                         op: crate::hir::UnaryOp::BitNot,
                         value: Box::new(expr),
                     },
@@ -99,6 +102,7 @@ impl Transformer {
                 // runtime reflect
                 return Ok((
                     Expr::Unary {
+                        span: u.span,
                         op: crate::hir::UnaryOp::Typeof,
                         value: Box::new(expr),
                     },
@@ -109,6 +113,7 @@ impl Transformer {
                 // simply return undefined
                 return Ok((
                     Expr::Unary {
+                        span: u.span,
                         op: crate::hir::UnaryOp::Void,
                         value: Box::new(expr),
                     },

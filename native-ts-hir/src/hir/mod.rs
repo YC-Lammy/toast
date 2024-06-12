@@ -26,7 +26,10 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ModuleValueExport<TY> where TY: Debug + Clone + From<Type>{
+pub enum ModuleValueExport<TY>
+where
+    TY: Debug + Clone + From<Type>,
+{
     Var(VariableId, TY),
     Function(FunctionId),
     GenericFunction(FunctionId),
@@ -44,7 +47,10 @@ pub enum ModuleTypeExport {
     GenericTypeAlias(GenericAliasId),
 }
 
-pub struct Module<TY = Type> where TY: Debug + Clone + From<Type>{
+pub struct Module<TY = Type>
+where
+    TY: Debug + Clone + From<Type>,
+{
     /// the unique function id of the entry function
     pub main_function: FunctionId,
     /// default export

@@ -52,6 +52,7 @@ impl Transformer {
                 object,
                 key,
                 optional,
+                ..
             } => {
                 // member cannot be opt chain
                 if optional {
@@ -64,6 +65,7 @@ impl Transformer {
                 // return update expression
                 return Ok((
                     Expr::MemberUpdate {
+                        span: u.span,
                         op: op,
                         object: object,
                         key: key,
@@ -76,6 +78,7 @@ impl Transformer {
                 // return update expression
                 return Ok((
                     Expr::VarUpdate {
+                        span: u.span,
                         op: op,
                         variable: variable,
                     },

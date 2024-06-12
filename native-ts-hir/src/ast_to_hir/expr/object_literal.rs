@@ -182,7 +182,11 @@ impl Transformer {
                         // add property with value undefined
                         values.push((
                             p.name.clone(),
-                            Expr::Cast(Box::new(Expr::Undefined), p.ty.clone()),
+                            Expr::Cast {
+                                span: DUMMY_SP,
+                                value: Box::new(Expr::Undefined),
+                                ty: p.ty.clone(),
+                            },
                         ));
                         // add property to type
                         tys.push(p.clone());
@@ -195,7 +199,10 @@ impl Transformer {
         tys.sort();
 
         // object expression
-        let mut obj_expr = Expr::Object { props: values };
+        let mut obj_expr = Expr::Object {
+            span: obj.span,
+            props: values,
+        };
         let obj_ty = Type::LiteralObject(tys.into());
 
         // type check

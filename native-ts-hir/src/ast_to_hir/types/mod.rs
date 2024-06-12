@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use native_ts_parser::swc_core::common::{Span, Spanned};
+use native_ts_parser::swc_core::common::{Span, Spanned, DUMMY_SP};
 use native_ts_parser::swc_core::ecma::ast as swc;
 use num_traits::ToPrimitive;
 
@@ -66,7 +66,11 @@ impl Transformer {
 
         fn inner_cast(expr: &mut Expr, ty: &Type) {
             unsafe {
-                let e = Expr::Cast(Box::new(core::ptr::read(expr)), ty.clone());
+                let e = Expr::Cast {
+                    span: DUMMY_SP,
+                    value: Box::new(core::ptr::read(expr)),
+                    ty: ty.clone(),
+                };
                 core::ptr::write(expr, e);
             }
         }

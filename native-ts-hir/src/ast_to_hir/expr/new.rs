@@ -68,6 +68,7 @@ impl Transformer {
 
                 return Ok((
                     Expr::New {
+                        span: n.span,
                         class: class_id,
                         args: arguments,
                     },

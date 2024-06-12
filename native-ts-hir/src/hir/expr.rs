@@ -205,6 +205,7 @@ where
 {
     Function(FunctionId),
     Member {
+        span: Span,
         object: Expr<TY>,
         prop: PropNameOrExpr,
         optional: bool,
@@ -279,6 +280,7 @@ where
     This(Span),
     /// constructs an array
     Array {
+        span: Span,
         values: Vec<Expr<TY>>,
     },
     /// constructs a tuple
@@ -287,29 +289,34 @@ where
         values: Vec<Expr<TY>>,
     },
     Object {
+        span: Span,
         props: Vec<(PropName, Expr<TY>)>,
     },
     /// a proxy to a namespace
     NamespaceObject(ModuleId),
     /// constructs a class
     New {
+        span: Span,
         class: ClassId,
         args: Vec<Expr<TY>>,
     },
     /// calls a function
     Call {
+        span: Span,
         callee: Box<Callee<TY>>,
         args: Vec<Expr<TY>>,
         optional: bool,
     },
     /// returns a reference
     Member {
+        span: Span,
         object: Box<Expr<TY>>,
         key: PropNameOrExpr<TY>,
         optional: bool,
     },
     /// returns the value with member type
     MemberAssign {
+        span: Span,
         op: AssignOp,
         object: Box<Expr<TY>>,
         key: PropNameOrExpr<TY>,
@@ -317,6 +324,7 @@ where
     },
     /// increments or decrements the property
     MemberUpdate {
+        span: Span,
         op: UpdateOp,
         object: Box<Expr<TY>>,
         key: PropNameOrExpr<TY>,
@@ -329,6 +337,7 @@ where
     Pop,
     /// returns the value with variable type
     VarAssign {
+        span: Span,
         op: AssignOp,
         variable: VariableId,
         value: Box<Expr<TY>>,
@@ -340,22 +349,26 @@ where
     },
     /// returns the value with
     VarUpdate {
+        span: Span,
         op: UpdateOp,
         variable: VariableId,
     },
     /// binary operations
     Bin {
+        span: Span,
         op: BinOp,
         left: Box<Expr<TY>>,
         right: Box<Expr<TY>>,
     },
     /// unary operations
     Unary {
+        span: Span,
         op: UnaryOp,
         value: Box<Expr<TY>>,
     },
     /// selects right if test is true else left
     Ternary {
+        span: Span,
         test: Box<Expr<TY>>,
         left: Box<Expr<TY>>,
         right: Box<Expr<TY>>,
@@ -363,16 +376,27 @@ where
 
     /// performs expression and returns last value
     Seq {
+        span: Span,
         seq: Vec<Expr<TY>>,
     },
     /// async wait
-    Await(Box<Expr>),
+    Await {
+        span: Span,
+        future: Box<Expr<TY>>,
+    },
     /// yields from generator
-    Yield(Box<Expr>),
+    Yield {
+        span: Span,
+        value: Box<Expr<TY>>,
+    },
 
     /// cast a value to another type.
     /// type of value must be compatable with Type
-    Cast(Box<Expr>, TY),
+    Cast {
+        span: Span,
+        value: Box<Expr<TY>>,
+        ty: TY,
+    },
     /// assertion that value is not null.
     /// this may panic at runtime if value is null or undefined
     AssertNonNull(Box<Expr>),

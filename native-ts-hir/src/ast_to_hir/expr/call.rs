@@ -59,6 +59,7 @@ impl Transformer {
                 // convert to callee
                 match expr {
                     Expr::Member {
+                        span,
                         object,
                         key,
                         optional,
@@ -73,6 +74,7 @@ impl Transformer {
                         // TODO
                         (
                             Callee::Member {
+                                span: span,
                                 object: *object,
                                 prop: key,
                                 optional: false,
@@ -153,6 +155,7 @@ impl Transformer {
 
         return Ok((
             Expr::Call {
+                span: call.span,
                 callee: Box::new(callee),
                 args: args,
                 optional: false,

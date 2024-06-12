@@ -1,5 +1,8 @@
 use std::fmt::Debug;
 
+use native_ts_parser::swc_core::common::Span;
+use native_ts_parser::swc_core::ecma::ast as swc;
+
 use crate::common::{ClassId, FunctionId, InterfaceId, VariableId};
 
 use super::{Expr, Type};
@@ -12,6 +15,16 @@ pub enum VarKind {
     Const,
     Using,
     AwaitUsing,
+}
+
+impl From<swc::VarDeclKind> for VarKind {
+    fn from(value: swc::VarDeclKind) -> Self {
+        match value {
+            swc::VarDeclKind::Const => Self::Const,
+            swc::VarDeclKind::Let => Self::Let,
+            swc::VarDeclKind::Var => Self::Var,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +85,12 @@ where
         label: Option<String>,
         update: Option<Box<Expr<TY>>>,
         end_check: Option<Box<Expr<TY>>>,
+    },
+    ForOfLoop {
+        span: Span,
+        label: Option<String>,
+        binding: VariableId,
+        target: Box<Expr<TY>>,
     },
     /// end of loop
     EndLoop,

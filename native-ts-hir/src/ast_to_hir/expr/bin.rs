@@ -19,6 +19,7 @@ impl Transformer {
                     if let Some(_) = self.type_has_property(&right_ty, &prop, false) {
                         return Ok((
                             Expr::Seq {
+                                span: b.span,
                                 seq: vec![right, Expr::Bool(true)],
                             },
                             Type::Bool,
@@ -26,6 +27,7 @@ impl Transformer {
                     } else {
                         return Ok((
                             Expr::Seq {
+                                span: b.span,
                                 seq: vec![right, Expr::Bool(false)],
                             },
                             Type::Bool,
@@ -245,6 +247,7 @@ impl Transformer {
 
         return Ok((
             Expr::Bin {
+                span: b.span,
                 op: b.op.into(),
                 left: Box::new(left),
                 right: Box::new(right),

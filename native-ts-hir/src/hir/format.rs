@@ -315,6 +315,30 @@ impl<'a> Formatter<'a> {
 
                 self.new_scope();
             }
+            Stmt::ForOfLoop {
+                span: _,
+                label,
+                binding,
+                target,
+            } => {
+                self.emit_spaces();
+
+                if let Some(label) = label {
+                    self.write_str(&label);
+                    self.write_str(":");
+                }
+
+                self.write_str("for (");
+
+                self.write_str("var");
+                self.write_int(binding.0);
+
+                self.write_str(" in ");
+                self.format_expr(target);
+
+                self.write_str("){\n");
+                self.new_scope();
+            }
             Stmt::EndLoop => {
                 self.close_scope();
                 self.emit_spaces();
@@ -506,7 +530,7 @@ impl<'a> Formatter<'a> {
     }
     pub fn format_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Array { values } => {
+            Expr::Array { values, .. } => {
                 self.write_str("[");
 
                 for (i, v) in values.iter().enumerate() {
@@ -521,16 +545,18 @@ impl<'a> Formatter<'a> {
                 self.format_expr(e);
                 self.write_str("!");
             }
-            Expr::Await(a) => {
+            Expr::Await { future, .. } => {
                 self.write_str("await ");
-                self.format_expr(a);
+                self.format_expr(&future);
             }
             Expr::Bigint(i) => {
                 let mut buf = itoa::Buffer::new();
                 self.write_str(buf.format(*i));
                 self.write_str("n")
             }
-            Expr::Bin { op, left, right } => {
+            Expr::Bin {
+                op, left, right, ..
+            } => {
                 self.write_str("(");
                 self.format_expr(&left);
                 self.write_str(")");
@@ -552,6 +578,7 @@ impl<'a> Formatter<'a> {
                 callee,
                 args,
                 optional,
+                ..
             } => {
                 match callee.as_ref() {
                     Callee::Expr(e) => self.format_expr(e),
@@ -563,6 +590,7 @@ impl<'a> Formatter<'a> {
                         object,
                         prop,
                         optional,
+                        span: _,
                     } => {
                         self.format_expr(object);
                         if *optional {
@@ -589,8 +617,8 @@ impl<'a> Formatter<'a> {
 
                 self.write_str(")")
             }
-            Expr::Cast(e, ty) => {
-                self.format_expr(e);
+            Expr::Cast { value, ty, .. } => {
+                self.format_expr(&value);
                 self.write_str(" as ");
                 self.format_ty(ty);
             }
@@ -609,6 +637,7 @@ impl<'a> Formatter<'a> {
                 object,
                 key,
                 optional,
+                ..
             } => {
                 self.format_expr(&object);
 
@@ -629,6 +658,7 @@ impl<'a> Formatter<'a> {
                 object,
                 key,
                 value,
+                ..
             } => {
                 self.format_expr(&object);
                 self.format_propname_or_expr(key);
@@ -636,7 +666,9 @@ impl<'a> Formatter<'a> {
                 self.write_str(op.as_str());
                 self.format_expr(&value);
             }
-            Expr::MemberUpdate { op, object, key } => {
+            Expr::MemberUpdate {
+                op, object, key, ..
+            } => {
                 match op {
                     UpdateOp::PrefixAdd => self.write_str("++"),
                     UpdateOp::PrefixSub => self.write_str("--"),
@@ -651,7 +683,7 @@ impl<'a> Formatter<'a> {
                     _ => {}
                 }
             }
-            Expr::New { class, args } => {
+            Expr::New { class, args, .. } => {
                 self.write_str("new class");
                 self.write_int(class.0);
 
@@ -670,7 +702,7 @@ impl<'a> Formatter<'a> {
                 self.write_str("namespace");
                 self.write_int(id.0);
             }
-            Expr::Object { props } => {
+            Expr::Object { props, .. } => {
                 self.write_str("{");
                 for (p, v) in props {
                     self.format_propname(p);
@@ -693,7 +725,7 @@ impl<'a> Formatter<'a> {
             }
             // todo: regex
             Expr::Regex() => {}
-            Expr::Seq { seq } => {
+            Expr::Seq { seq, .. } => {
                 self.write_str("(");
                 for (i, e) in seq.iter().enumerate() {
                     if i != 0 && i != seq.len() - 1 {
@@ -711,7 +743,9 @@ impl<'a> Formatter<'a> {
             Expr::Symbol(s) => {
                 self.write_str(&s.to_string());
             }
-            Expr::Ternary { test, left, right } => {
+            Expr::Ternary {
+                test, left, right, ..
+            } => {
                 self.format_expr(&test);
                 self.write_str("?");
                 self.format_expr(&left);
@@ -730,7 +764,7 @@ impl<'a> Formatter<'a> {
                 }
                 self.write_str("]")
             }
-            Expr::Unary { op, value } => {
+            Expr::Unary { op, value, .. } => {
                 let op = match op {
                     UnaryOp::BitNot => "~",
                     UnaryOp::LogicalNot => "!",
@@ -749,6 +783,7 @@ impl<'a> Formatter<'a> {
                 op,
                 variable,
                 value,
+                ..
             } => {
                 self.write_str("var");
                 self.write_int(variable.0);
@@ -761,7 +796,7 @@ impl<'a> Formatter<'a> {
                 self.write_str("var");
                 self.write_int(variable.0);
             }
-            Expr::VarUpdate { op, variable } => {
+            Expr::VarUpdate { op, variable, .. } => {
                 match op {
                     UpdateOp::PrefixAdd => self.write_str("++"),
                     UpdateOp::PrefixSub => self.write_str("--"),
@@ -776,9 +811,9 @@ impl<'a> Formatter<'a> {
                     _ => {}
                 }
             }
-            Expr::Yield(y) => {
+            Expr::Yield { value, .. } => {
                 self.write_str("yield ");
-                self.format_expr(y);
+                self.format_expr(&value);
             }
         }
     }

@@ -1,3 +1,4 @@
+use native_ts_parser::swc_core::common::Span;
 use native_ts_parser::swc_core::ecma::ast as swc;
 
 use crate::common::ModuleId;
@@ -24,12 +25,8 @@ impl Transformer {
         Option<ModuleTypeExport>,
         Option<ModuleId>,
     ) {
-        let guard = self
-            .parsed_modules
-            .read();
-        let m = guard
-            .get(&module)
-            .expect("module not yet parsed");
+        let guard = self.parsed_modules.read();
+        let m = guard.get(&module).expect("module not yet parsed");
 
         return (
             m.default_value_export.clone(),
@@ -47,12 +44,9 @@ impl Transformer {
         Option<ModuleTypeExport>,
         Option<ModuleId>,
     ) {
-        let guard = self
-            .parsed_modules.read();
+        let guard = self.parsed_modules.read();
 
-        let m = guard
-            .get(&module)
-            .expect("module not yet parsed");
+        let m = guard.get(&module).expect("module not yet parsed");
 
         let value = m.value_exports.get(name).cloned();
         let ty = m.type_exports.get(name).cloned();
@@ -122,7 +116,11 @@ impl Transformer {
         return Ok(());
     }
 
-    pub(super) fn translate_export_default_expr(&mut self, expr: &swc::Expr) -> Result<()> {
+    pub(super) fn translate_export_default_expr(
+        &mut self,
+        span: Span,
+        expr: &swc::Expr,
+    ) -> Result<()> {
         // create new variable
         let varid = VariableId::new();
 
@@ -142,6 +140,7 @@ impl Transformer {
             .func()
             .stmts
             .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                span: span,
                 op: crate::hir::AssignOp::Assign,
                 variable: varid,
                 value: Box::new(expr),

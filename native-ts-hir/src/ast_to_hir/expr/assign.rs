@@ -200,6 +200,7 @@ impl Transformer {
         // return variable assignment expression
         return Ok((
             Expr::VarAssign {
+                span: span,
                 op: op.into(),
                 variable: varid,
                 value: Box::new(value),
@@ -232,6 +233,7 @@ impl Transformer {
             object,
             key,
             optional,
+            ..
         } = member_expr
         {
             // opt chain is not allowed
@@ -247,6 +249,7 @@ impl Transformer {
 
             return Ok((
                 Expr::MemberAssign {
+                    span: span,
                     op: op.into(),
                     object: object,
                     key: key,
@@ -260,7 +263,7 @@ impl Transformer {
     }
 
     /// translate pattern assignment
-    fn translate_pat_assign(
+    pub fn translate_pat_assign(
         &mut self,
         pat: &swc::Pat,
         op: swc::AssignOp,
@@ -290,12 +293,14 @@ impl Transformer {
 
                 match assign_target {
                     Expr::Member {
+                        span,
                         object,
                         key,
                         // invalid assignment target if optional
                         optional: false,
                     } => Ok((
                         Expr::MemberAssign {
+                            span,
                             op: crate::hir::AssignOp::Assign,
                             object: object,
                             key: key,
@@ -303,8 +308,9 @@ impl Transformer {
                         },
                         target_ty,
                     )),
-                    Expr::VarLoad { span: _, variable } => Ok((
+                    Expr::VarLoad { span, variable } => Ok((
                         Expr::VarAssign {
+                            span,
                             op: crate::hir::AssignOp::Assign,
                             variable: variable,
                             value: Box::new(value),
@@ -415,6 +421,7 @@ impl Transformer {
                     };
 
                     let v = Expr::Member {
+                        span: a.key.span,
                         object: Box::new(v),
                         key: PropNameOrExpr::PropName(prop.clone()),
                         optional: false,
@@ -455,6 +462,7 @@ impl Transformer {
                     };
 
                     let v = Expr::Member {
+                        span: k.span(),
                         object: Box::new(v),
                         key: PropNameOrExpr::PropName(key.clone()),
                         optional: false,
@@ -495,7 +503,10 @@ impl Transformer {
         obj_ty.sort();
 
         return Ok((
-            Expr::Object { props: obj_expr },
+            Expr::Object {
+                span: pat.span,
+                props: obj_expr,
+            },
             Type::LiteralObject(obj_ty.into()),
         ));
     }
@@ -555,6 +566,7 @@ impl Transformer {
                         elem,
                         swc::AssignOp::Assign,
                         Expr::Member {
+                            span: elem.span(),
                             // the object
                             object: Box::new(obj),
                             // the index

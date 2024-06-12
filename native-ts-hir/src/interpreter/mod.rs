@@ -6,6 +6,7 @@ use parking_lot::RwLock;
 use crate::common::{ClassId, EnumId, FunctionId, InterfaceId, ModuleId, VariableId};
 use crate::hir::*;
 use crate::symbol_table::SymbolTable;
+use crate::util::OR;
 use crate::PropName;
 use crate::Symbol;
 
@@ -643,6 +644,86 @@ impl<'a> InterpreterRunning<'a> {
                         }
                     }
                 }
+                Stmt::ForOfLoop {
+                    span: _,
+                    label,
+                    binding,
+                    target,
+                } => {
+                    let target = match self.run_expr(target) {
+                        Ok(v) => v,
+                        Err(e) => return StmtResult::Error(e),
+                    };
+
+                    let properties = self.enumerable_properties(&target);
+
+                    // the loop
+                    for prop in properties {
+                        match prop {
+                            OR::A(s) => self.context.write(*binding, Value::String(s)),
+                            OR::B(s) => self.context.write(*binding, Value::Symbol(s)),
+                        }
+
+                        let mut new_cursor = *cursor;
+
+                        // execute statements within loop
+                        let re = self.run_stmts_until(stmts, &mut new_cursor, |s| {
+                            if let Stmt::EndLoop = s {
+                                true
+                            } else {
+                                false
+                            }
+                        });
+
+                        match re {
+                            StmtResult::Break(l) => {
+                                // if no label is specified, break anyways
+                                if l.is_none() || &l == label {
+                                    break;
+                                } else {
+                                    // label not match, break
+                                    return StmtResult::Break(l);
+                                }
+                            }
+                            StmtResult::Continue(l) => {
+                                // label is not specidied or is none
+                                if l.is_none() || &l == label {
+                                    // continue to next loop
+                                    continue;
+                                } else {
+                                    return StmtResult::Continue(l);
+                                }
+                            }
+                            StmtResult::Return(_) => return re,
+                            StmtResult::Error(_) => return re,
+                            StmtResult::Ok => {}
+                        };
+                    }
+
+                    // loop until endloop is reached
+
+                    // counter for loop scope opened
+                    let mut i = 0;
+                    loop {
+                        let s = &stmts[*cursor];
+                        *cursor += 1;
+
+                        if let Stmt::EndLoop = s {
+                            // no interior scope is present
+                            if i == 0 {
+                                break;
+                            } else {
+                                // decrement interier scope
+                                i -= 1;
+                            }
+                        };
+
+                        // opens an interier scope
+                        if let Stmt::Loop { .. } = s {
+                            i += 1;
+                        }
+                    }
+                }
                 Stmt::EndLoop => unreachable!(),
                 Stmt::Try => {
                     let re = self.run_stmts_until(stmts, cursor, |s| {
@@ -887,21 +968,21 @@ impl<'a> InterpreterRunning<'a> {
             Expr::Regex() => Ok(Value::Regex()),
             Expr::Function(f) => Ok(Value::Function(*f)),
             Expr::This(_) => Ok(self.this.clone()),
-            Expr::Array { values } => {
+            Expr::Array { values, .. } => {
                 let mut array = Vec::new();
                 for v in values {
                     array.push(self.run_expr(v)?);
                 }
                 Ok(Value::Array(Arc::new(RwLock::new(array))))
             }
-            Expr::Tuple { span: _, values } => {
+            Expr::Tuple { values, .. } => {
                 let mut tuple = Vec::new();
                 for v in values {
                     tuple.push(self.run_expr(v)?);
                 }
                 Ok(Value::Tuple(Arc::new(RwLock::new(tuple))))
             }
-            Expr::Object { props } => {
+            Expr::Object { props, .. } => {
                 let mut obj = Vec::new();
                 for (p, e) in props {
                     let v = self.run_expr(e)?;
@@ -910,13 +991,14 @@ impl<'a> InterpreterRunning<'a> {
                 Ok(Value::DynObject { values: obj.into() })
             }
             Expr::NamespaceObject(id) => Ok(Value::NamespaceObject(*id)),
-            Expr::New { class, args } => {
+            Expr::New { class, args, .. } => {
                 todo!()
             }
             Expr::Call {
                 callee,
                 args,
                 optional,
+                ..
             } => {
                 let (this, callee) = match callee.as_ref() {
                     Callee::Expr(e) => (self.this.clone(), Some(self.run_expr(e)?)),
@@ -925,6 +1007,7 @@ impl<'a> InterpreterRunning<'a> {
                         object,
                         prop,
                         optional,
+                        span: _,
                     } => {
                         let obj = self.run_expr(object)?;
                         let method = match prop {
@@ -991,6 +1074,7 @@ impl<'a> InterpreterRunning<'a> {
             Expr::ReadStack => Ok(self.stack.last().expect("stack underflow").clone()),
             Expr::Pop => Ok(self.stack.pop().expect("stack underflow")),
             Expr::Member {
+                span,
                 object,
                 key,
                 optional,
@@ -1016,6 +1100,7 @@ impl<'a> InterpreterRunning<'a> {
                 }
             }
             Expr::MemberAssign {
+                span,
                 op,
                 object,
                 key,
@@ -1082,7 +1167,12 @@ impl<'a> InterpreterRunning<'a> {
 
                 return Ok(value);
             }
-            Expr::MemberUpdate { op, object, key } => {
+            Expr::MemberUpdate {
+                span,
+                op,
+                object,
+                key,
+            } => {
                 let obj = self.run_expr(&object)?;
 
                 enum PorV {
@@ -1141,6 +1231,7 @@ impl<'a> InterpreterRunning<'a> {
                 return Ok(rv);
             }
             Expr::VarAssign {
+                span,
                 op,
                 variable,
                 value,
@@ -1178,7 +1269,7 @@ impl<'a> InterpreterRunning<'a> {
                 return Ok(value);
             }
             Expr::VarLoad { span: _, variable } => return Ok(self.context.read(*variable)),
-            Expr::VarUpdate { op, variable } => {
+            Expr::VarUpdate { span, op, variable } => {
                 let old = self.context.read(*variable);
 
                 let (rv, nv) = match op {
@@ -1212,7 +1303,12 @@ impl<'a> InterpreterRunning<'a> {
 
                 return Ok(rv);
             }
-            Expr::Bin { op, left, right } => {
+            Expr::Bin {
+                span,
+                op,
+                left,
+                right,
+            } => {
                 let a = self.run_expr(&left)?;
 
                 // only evaluate right hand side if left is false
@@ -1264,7 +1360,7 @@ impl<'a> InterpreterRunning<'a> {
 
                 return Ok(v);
             }
-            Expr::Unary { op, value } => {
+            Expr::Unary { span, op, value } => {
                 let value = self.run_expr(&value)?;
 
                 let v = match op {
@@ -1305,7 +1401,12 @@ impl<'a> InterpreterRunning<'a> {
 
                 return Ok(v);
             }
-            Expr::Ternary { test, left, right } => {
+            Expr::Ternary {
+                span,
+                test,
+                left,
+                right,
+            } => {
                 let test = self.run_expr(&test)?;
 
                 if self.to_bool(&test) {
@@ -1314,7 +1415,7 @@ impl<'a> InterpreterRunning<'a> {
                     return self.run_expr(&right);
                 }
             }
-            Expr::Seq { seq } => {
+            Expr::Seq { span, seq } => {
                 let mut v = Value::Undefined;
 
                 for e in seq {
@@ -1323,12 +1424,12 @@ impl<'a> InterpreterRunning<'a> {
 
                 return Ok(v);
             }
-            Expr::Await(p) => {
-                let p = self.run_expr(&p)?;
+            Expr::Await { span, future } => {
+                let p = self.run_expr(&future)?;
                 todo!()
             }
-            Expr::Yield(y) => {
-                let y = self.run_expr(&y)?;
+            Expr::Yield { span, value } => {
+                let y = self.run_expr(&value)?;
                 todo!()
             }
             Expr::Closure(c) => {
@@ -1350,8 +1451,8 @@ impl<'a> InterpreterRunning<'a> {
                     captures: Arc::new(cap),
                 });
             }
-            Expr::Cast(v, ty) => {
-                let v = self.run_expr(&v)?;
+            Expr::Cast { span, value, ty } => {
+                let v = self.run_expr(&value)?;
                 return Ok(self.cast(&v, ty));
             }
             Expr::AssertNonNull(v) => {
@@ -1482,6 +1583,12 @@ impl<'a> InterpreterRunning<'a> {
                 },
                 _ => panic!("invalid cast"),
             },
+        }
+    }
+
+    fn enumerable_properties(&self, value: &Value) -> Vec<OR<String, Symbol>> {
+        match value {
+            _ => todo!(),
         }
     }
 

@@ -18,6 +18,7 @@ impl Transformer {
 
         return Ok((
             Expr::Ternary {
+                span: cond.span,
                 test: Box::new(test),
                 left: Box::new(cons),
                 right: Box::new(alt),

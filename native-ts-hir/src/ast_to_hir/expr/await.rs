@@ -39,6 +39,12 @@ impl Transformer {
             ty = Type::Union(v.into())
         }
 
-        Ok((Expr::Await(Box::new(e)), ty))
+        Ok((
+            Expr::Await {
+                span: expr.span,
+                future: Box::new(e),
+            },
+            ty,
+        ))
     }
 }

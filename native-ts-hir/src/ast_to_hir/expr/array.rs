@@ -58,7 +58,10 @@ impl Transformer {
 
                 // return array expression
                 return Ok((
-                    Expr::Array { values: elements },
+                    Expr::Array {
+                        span: a.span,
+                        values: elements,
+                    },
                     Type::Array(expected_elem_ty.clone()),
                 ));
             }
@@ -181,7 +184,13 @@ impl Transformer {
                     .unwrap();
 
                 // return the array expression
-                return Ok((Expr::Array { values: values }, array_ty));
+                return Ok((
+                    Expr::Array {
+                        span: a.span,
+                        values: values,
+                    },
+                    array_ty,
+                ));
             }
         }
     }

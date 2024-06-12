@@ -346,6 +346,7 @@ impl Transformer {
                                 .func()
                                 .stmts
                                 .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                    span: prop.span,
                                     op: crate::hir::AssignOp::Assign,
                                     variable: id,
                                     value: Box::new(init),
@@ -395,6 +396,7 @@ impl Transformer {
                                 .func()
                                 .stmts
                                 .push(Stmt::Expr(Box::new(Expr::VarAssign {
+                                    span: prop.span,
                                     op: crate::hir::AssignOp::Assign,
                                     variable: id,
                                     value: Box::new(init),

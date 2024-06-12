@@ -133,9 +133,11 @@ impl Transformer {
                         object,
                         key,
                         optional,
+                        span,
                     } = expr
                     {
                         callee = Some(Callee::Member {
+                            span: span,
                             object: *object,
                             prop: key,
                             optional: optional,
@@ -180,6 +182,7 @@ impl Transformer {
                 // return call expression
                 return Ok((
                     Expr::Call {
+                        span: n.span,
                         callee: Box::new(callee),
                         args: args,
                         optional: true,

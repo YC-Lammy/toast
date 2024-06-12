@@ -37,6 +37,7 @@ impl Transformer {
                 if let Some(member_ty) = self.type_has_property(&obj_ty, &name, false) {
                     return Ok((
                         Expr::Member {
+                            span: member.span,
                             object: Box::new(obj),
                             key: PropNameOrExpr::PropName(name),
                             optional: false,
@@ -60,6 +61,7 @@ impl Transformer {
                         }
                         return Ok((
                             Expr::Member {
+                                span: member.span,
                                 object: Box::new(obj),
                                 key: PropNameOrExpr::Expr(e, ty),
                                 optional: false,
@@ -71,6 +73,7 @@ impl Transformer {
                         Type::Int | Type::LiteralInt(_) | Type::Number | Type::LiteralNumber(_) => {
                             return Ok((
                                 Expr::Member {
+                                    span: member.span,
                                     object: Box::new(obj),
                                     key: PropNameOrExpr::Expr(e, ty),
                                     optional: false,
@@ -89,6 +92,7 @@ impl Transformer {
                         Type::Int | Type::LiteralInt(_) | Type::Number | Type::LiteralNumber(_) => {
                             return Ok((
                                 Expr::Member {
+                                    span: member.span,
                                     object: Box::new(obj),
                                     key: PropNameOrExpr::Expr(e, ty),
                                     optional: false,

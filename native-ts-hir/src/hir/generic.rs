@@ -7,8 +7,7 @@ use native_ts_parser::swc_core::common::Span;
 use native_ts_parser::swc_core::ecma::ast::PropName;
 
 use crate::common::{
-    ClassId, FunctionId, GenericAliasId, GenericClassId, GenericId, GenericInterfaceId,
-    VariableId,
+    ClassId, FunctionId, GenericAliasId, GenericClassId, GenericId, GenericInterfaceId, VariableId,
 };
 
 use super::{Expr, FuncType, Type};

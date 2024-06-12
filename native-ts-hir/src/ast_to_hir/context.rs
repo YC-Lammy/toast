@@ -739,13 +739,4 @@ impl Context {
 
         return None;
     }
-    /*
-    pub fn get_variable_id(&self, name: &str) -> VariableId{
-        match self.scopes.last().unwrap().bindings.get(name){
-            Some(Binding::Var{ id, ..}) => *id,
-            Some(Binding::Using { id,.. }) => *id,
-            _ => unreachable!()
-        }
-    }
-    */
 }
